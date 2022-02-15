@@ -1,3 +1,4 @@
+mod calc;
 mod ir;
 
 #[derive(Clone, Copy, Debug)]
