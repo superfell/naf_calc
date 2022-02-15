@@ -6,6 +6,7 @@ use bitflags::bitflags;
 use std::ptr;
 use windows::Win32::System::Memory;
 use windows::Win32::System::Threading;
+use windows::Win32::System::Threading::WaitForSingleObject;
 
 const IRSDK_MAX_BUFS: usize = 4;
 const IRSDK_MAX_STRING: usize = 32;
@@ -66,6 +67,7 @@ struct IrsdkHeader {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Debug)]
 struct IrsdkVarHeader {
     var_type: VarType, // irsdk_VarType
     offset: i32,       // offset fron start of buffer row
@@ -78,6 +80,7 @@ struct IrsdkVarHeader {
     desc: [u8; IRSDK_MAX_DESC],
     unit: [u8; IRSDK_MAX_STRING], // something like "kg/m^2"
 }
+#[allow(dead_code)]
 impl IrsdkVarHeader {
     fn name(&self) -> Result<&str, std::str::Utf8Error> {
         unsafe { CStr::from_ptr(self.name.as_ptr() as *const c_char).to_str() }
@@ -107,44 +110,26 @@ impl IrsdkVarHeader {
     }
 }
 
-pub struct Var<'a> {
-    hdr: &'a IrsdkVarHeader,
-    data: &'a [u8],
+#[derive(Debug)]
+pub struct Var {
+    hdr: IrsdkVarHeader,
 }
-impl<'a> Var<'a> {
+#[allow(dead_code)]
+impl Var {
     pub fn var_type(&self) -> VarType {
         return self.hdr.var_type;
     }
-    pub fn name(&self) -> &'a str {
+    pub fn name(&self) -> &str {
         self.hdr.name().unwrap()
     }
-    pub fn desc(&self) -> &'a str {
+    pub fn desc(&self) -> &str {
         self.hdr.desc().unwrap()
     }
-    pub fn unit(&self) -> &'a str {
+    pub fn unit(&self) -> &str {
         self.hdr.unit().unwrap()
     }
-    pub fn int(&self) -> Option<i32> {
-        if self.hdr.var_type == VarType::INT {
-            unsafe {
-                let x = self.data.as_ptr().add(self.hdr.offset as usize);
-                let v = x as *const i32;
-                Some(*v)
-            }
-        } else {
-            None
-        }
-    }
-    pub fn float(&self) -> Option<f32> {
-        if self.hdr.var_type == VarType::FLOAT {
-            unsafe {
-                let x = self.data.as_ptr().add(self.hdr.offset as usize);
-                let v = x as *const f32;
-                Some(*v)
-            }
-        } else {
-            None
-        }
+    pub fn count(&self) -> usize {
+        self.hdr.count as usize
     }
 }
 
@@ -158,6 +143,7 @@ pub struct Client {
     last_tick_count: i32,
     data: bytes::BytesMut,
 }
+#[allow(dead_code)]
 impl Client {
     pub fn new() -> Self {
         return Client {
@@ -221,6 +207,15 @@ impl Client {
             }
         }
     }
+    pub fn wait_for_data(&mut self, wait: std::time::Duration) -> bool {
+        if self.get_new_data() {
+            return true;
+        }
+        unsafe {
+            WaitForSingleObject(self.new_data, wait.as_millis().try_into().unwrap());
+        }
+        self.get_new_data()
+    }
     pub fn get_new_data(&mut self) -> bool {
         if !self.startup() {
             return false;
@@ -241,7 +236,6 @@ impl Client {
                 let b = &(*h).var_buf[latest];
                 if self.last_tick_count < b.tick_count {
                     if self.data.capacity() < buf_len {
-                        println!("buf len {}", buf_len);
                         self.data.reserve(buf_len)
                     }
                     for _tries in 0..2 {
@@ -263,22 +257,75 @@ impl Client {
             None => None,
             Some(h) => {
                 unsafe {
-                    println!("number of vars {}", (*h).num_vars);
                     let vhbase = self.shared_mem.add((*h).var_header_offset as usize)
                         as *const IrsdkVarHeader;
                     for i in 0..(*h).num_vars as usize {
                         let vh = vhbase.add(i);
                         if (*vh).has_name(name) {
-                            return Some(Var {
-                                hdr: &*vh,
-                                data: &self.data,
-                            });
+                            return Some(Var { hdr: *vh });
                         }
                     }
                 }
                 None
             }
         }
+    }
+    fn value<T: Copy>(&self, var: &Var, fortype: VarType) -> Option<T> {
+        if var.hdr.var_type == fortype {
+            unsafe {
+                let x = self.data.as_ptr().add(var.hdr.offset as usize);
+                let v = x as *const T;
+                Some(*v)
+            }
+        } else {
+            None
+        }
+    }
+    pub fn bool(&self, var: &Var) -> Option<bool> {
+        self.value(var, VarType::BOOL)
+    }
+    pub fn char(&self, var: &Var) -> Option<u8> {
+        self.value(var, VarType::CHAR)
+    }
+    pub fn int(&self, var: &Var) -> Option<i32> {
+        self.value(var, VarType::INT)
+    }
+    pub fn bitfield(&self, var: &Var) -> Option<i32> {
+        self.value(var, VarType::BITFIELD)
+    }
+    pub fn float(&self, var: &Var) -> Option<f32> {
+        self.value(var, VarType::FLOAT)
+    }
+    pub fn double(&self, var: &Var) -> Option<f64> {
+        self.value(var, VarType::DOUBLE)
+    }
+    fn values<T: Copy>(&self, var: &Var, fortype: VarType) -> &[T] {
+        if var.hdr.var_type == fortype {
+            unsafe {
+                let x = self.data.as_ptr().add(var.hdr.offset as usize) as *const T;
+                std::slice::from_raw_parts(x, var.count())
+            }
+        } else {
+            &[]
+        }
+    }
+    pub fn bools(&self, var: &Var) -> &[bool] {
+        self.values(var, VarType::BOOL)
+    }
+    pub fn chars(&self, var: &Var) -> &[u8] {
+        self.values(var, VarType::CHAR)
+    }
+    pub fn ints(&self, var: &Var) -> &[i32] {
+        self.values(var, VarType::INT)
+    }
+    pub fn bitfields(&self, var: &Var) -> &[i32] {
+        self.values(var, VarType::BITFIELD)
+    }
+    pub fn floats(&self, var: &Var) -> &[f32] {
+        self.values(var, VarType::FLOAT)
+    }
+    pub fn doubles(&self, var: &Var) -> &[f64] {
+        self.values(var, VarType::DOUBLE)
     }
     pub fn session_info(&self) -> &str {
         match self.header {
