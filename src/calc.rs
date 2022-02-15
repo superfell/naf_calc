@@ -144,9 +144,29 @@ fn strat_fwd(r: &StratRequest) -> Strategy {
         togo -= len;
         f = r.tank_size;
     }
+    let full_stint_len = round::floor((r.tank_size / r.green.fuel) as f64, 0) as i32;
+    let max_stint_laps = (stints.len() as i32 - 1) * full_stint_len;
+    let act_stint_laps: i32 = stints.iter().skip(1).sum();
+    let mut stops = Vec::with_capacity(stints.len());
+    let mut lap_open = 0;
+    let mut lap_close = 0;
+    let mut ext = max_stint_laps - act_stint_laps;
+    for i in 0..stints.len() - 1 {
+        // we can bring this stop forward by extending a later stop
+        let wdw_size = cmp::min(ext, stints[i]);
+        stops.push(Pitstop {
+            open: lap_open + stints[i] - wdw_size,
+            close: lap_close + stints[i],
+        });
+        lap_open += stints[i] - wdw_size;
+        lap_close += stints[i];
+        ext -= wdw_size;
+    }
+    println!("{:?}", stints);
+    println!("{:?}", stops);
     Strategy {
         stints: stints,
-        stops: vec![],
+        stops: stops,
     }
 }
 
@@ -173,10 +193,9 @@ fn strat_rev(r: &StratRequest) -> Strategy {
         stints.push(togo);
     }
     stints.reverse();
-    let mut stops = Vec::with_capacity(stints.len());
     Strategy {
         stints: stints,
-        stops: stops,
+        stops: vec![],
     }
 }
 
@@ -252,9 +271,11 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![18, 20, 11], s.stints);
+
         let s = strat_rev(&r);
         assert_eq!(vec![9, 20, 20], s.stints);
     }
+
     #[test]
     fn strat_one_stop_big_window() {
         let d = Duration::new(40, 0);
@@ -271,6 +292,7 @@ mod tests {
         let s = strat_rev(&r);
         assert_eq!(vec![4, 20], s.stints);
     }
+
     #[test]
     fn strat_two_stops_with_splash() {
         let d = Duration::new(40, 0);
@@ -286,5 +308,22 @@ mod tests {
         assert_eq!(vec![3, 20, 6], s.stints);
         let s = strat_rev(&r);
         assert_eq!(vec![3, 6, 20], s.stints);
+    }
+
+    #[test]
+    fn strat_two_stops_only_just() {
+        let d = Duration::new(40, 0);
+        let r = StratRequest {
+            fuel_left: 9.6,
+            tank_size: 10.0,
+            yellow_togo: 0,
+            green_laps_togo: 58,
+            green: Rate { fuel: 0.5, time: d },
+            yellow: Rate { fuel: 0.1, time: d },
+        };
+        let s = strat_fwd(&r);
+        assert_eq!(vec![19, 20, 19], s.stints);
+        let s = strat_rev(&r);
+        assert_eq!(vec![18, 20, 20], s.stints);
     }
 }
