@@ -2,6 +2,7 @@ use bitflags::bitflags;
 use math::round;
 use std::cmp;
 use std::fmt;
+use std::iter;
 use std::time::Duration;
 
 bitflags! {
@@ -86,7 +87,8 @@ struct StratRequest {
     fuel_left: f32,
     tank_size: f32,
     yellow_togo: i32,
-    green_laps_togo: i32,
+    green_laps_togo: Option<i32>,
+    time_togo: Option<Duration>,
     green: Rate,
     yellow: Rate,
 }
@@ -141,13 +143,13 @@ impl Calculator {
             fuel_left: self.laps.last().unwrap().fuel_left,
             tank_size: self.cfg.fuel_tank_size,
             yellow_togo: 0,
-            green_laps_togo: self.laps_remaining(),
+            green_laps_togo: Some(self.laps_remaining()),
+            time_togo: None,
             green: green.unwrap(),
             yellow: yellow,
         };
         let fwd = strat_fwd(&r);
-        let rev = strat_rev(&r);
-        vec![fwd, rev]
+        vec![fwd]
     }
 }
 
@@ -155,13 +157,29 @@ impl Calculator {
 fn strat_fwd(r: &StratRequest) -> Strategy {
     let mut stints = Vec::with_capacity(4);
     let mut f = r.fuel_left;
-    let mut togo = r.green_laps_togo;
-    while togo > 0 {
-        let len = cmp::min(togo, round::floor((f / r.green.fuel) as f64, 0) as i32);
-        stints.push(len);
-        togo -= len;
-        f = r.tank_size;
+    let yellow = iter::repeat(r.yellow).take(r.yellow_togo as usize);
+    let green = match r.green_laps_togo {
+        // the take(i32:MAX) allows both match arms to return the same type (a Take<T>)
+        // ideally green would be Iter<T> but that's a trait, and you'd need to box the value for that to be possible.
+        // https://stackoverflow.com/questions/26378842/how-do-i-overcome-match-arms-with-incompatible-types-for-structs-implementing-sa
+        None => iter::repeat(r.green).take(i32::MAX as usize),
+        Some(g) => iter::repeat(r.green).take(g as usize),
+    };
+    let rates = yellow.chain(green);
+    let mut stint = 0;
+    for rt in rates {
+        if f < rt.fuel {
+            stints.push(stint);
+            stint = 0;
+            f = r.tank_size;
+        }
+        f -= rt.fuel;
+        stint += 1;
     }
+    if stint > 0 {
+        stints.push(stint);
+    }
+
     let full_stint_len = round::floor((r.tank_size / r.green.fuel) as f64, 0) as i32;
     let max_stint_laps = (stints.len() as i32 - 1) * full_stint_len;
     let act_stint_laps: i32 = stints.iter().skip(1).sum();
@@ -183,36 +201,6 @@ fn strat_fwd(r: &StratRequest) -> Strategy {
     Strategy {
         stints: stints,
         stops: stops,
-    }
-}
-
-// a strategy that backtimes from the finish, i.e. the last stint is a full tank.
-// don't think this is needed, as the fwd_window calcs will produce the equivilent data.
-fn strat_rev(r: &StratRequest) -> Strategy {
-    let mut stints = Vec::with_capacity(4);
-    let mut togo = r.green_laps_togo;
-    let full_stint_len = round::floor((r.tank_size / r.green.fuel) as f64, 0) as i32;
-    let first_stint_max_len = round::floor((r.fuel_left / r.green.fuel) as f64, 0) as i32;
-    while togo > 0 {
-        let this_stint = cmp::min(togo, full_stint_len);
-        stints.push(this_stint);
-        togo -= this_stint;
-    }
-    if let Some(&l) = stints.last() {
-        if l > first_stint_max_len {
-            stints.pop();
-            stints.push(l - first_stint_max_len);
-            stints.push(first_stint_max_len);
-            togo = 0;
-        }
-    }
-    if togo > 0 {
-        stints.push(togo);
-    }
-    stints.reverse();
-    Strategy {
-        stints: stints,
-        stops: vec![],
     }
 }
 
@@ -248,16 +236,14 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 20.0,
             yellow_togo: 0,
-            green_laps_togo: 5,
+            green_laps_togo: Some(5),
+            time_togo: None,
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![5], s.stints);
         assert_eq!(Vec::<Pitstop>::new(), s.stops);
-
-        let s = strat_rev(&r);
-        assert_eq!(vec![5], s.stints);
     }
 
     #[test]
@@ -267,16 +253,34 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: 34,
+            green_laps_togo: Some(34),
+            time_togo: None,
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![19, 15], s.stints);
         assert_eq!(vec![Pitstop::new(14, 19)], s.stops);
+    }
 
-        let s = strat_rev(&r);
-        assert_eq!(vec![14, 20], s.stints);
+    #[test]
+    fn strat_one_stop_yellow() {
+        let d = Duration::new(25, 0);
+        let r = StratRequest {
+            fuel_left: 9.5,
+            tank_size: 10.0,
+            yellow_togo: 3,
+            green_laps_togo: Some(20),
+            time_togo: None,
+            green: Rate { fuel: 0.5, time: d },
+            yellow: Rate {
+                fuel: 0.1,
+                time: d.mul_f32(5.0),
+            },
+        };
+        let s = strat_fwd(&r);
+        assert_eq!(vec![21, 2], s.stints);
+        assert_eq!(vec![Pitstop::new(3, 21)], s.stops);
     }
 
     #[test]
@@ -286,16 +290,14 @@ mod tests {
             fuel_left: 9.3,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: 49,
+            green_laps_togo: Some(49),
+            time_togo: None,
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![18, 20, 11], s.stints);
         assert_eq!(vec![Pitstop::new(9, 18), Pitstop::new(29, 38)], s.stops);
-
-        let s = strat_rev(&r);
-        assert_eq!(vec![9, 20, 20], s.stints);
     }
 
     #[test]
@@ -305,16 +307,14 @@ mod tests {
             fuel_left: 9.3,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: 24,
+            green_laps_togo: Some(24),
+            time_togo: None,
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![18, 6], s.stints);
         assert_eq!(vec![Pitstop::new(4, 18)], s.stops);
-
-        let s = strat_rev(&r);
-        assert_eq!(vec![4, 20], s.stints);
     }
 
     #[test]
@@ -324,16 +324,14 @@ mod tests {
             fuel_left: 1.5,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: 29,
+            green_laps_togo: Some(29),
+            time_togo: None,
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![3, 20, 6], s.stints);
         assert_eq!(vec![Pitstop::new(0, 3), Pitstop::new(9, 23)], s.stops);
-
-        let s = strat_rev(&r);
-        assert_eq!(vec![3, 6, 20], s.stints);
     }
 
     #[test]
@@ -343,15 +341,13 @@ mod tests {
             fuel_left: 9.6,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: 58,
+            green_laps_togo: Some(58),
+            time_togo: None,
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![19, 20, 19], s.stints);
         assert_eq!(vec![Pitstop::new(18, 19), Pitstop::new(38, 39)], s.stops);
-
-        let s = strat_rev(&r);
-        assert_eq!(vec![18, 20, 20], s.stints);
     }
 }
