@@ -26,9 +26,8 @@ pub struct Lap {
 
 #[derive(Clone, Copy, Debug)]
 pub struct RaceConfig {
-    laps: Option<i32>,
-    time: Option<Duration>,
     fuel_tank_size: f32,
+    ends: EndsWith,
 }
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Rate {
@@ -50,11 +49,6 @@ impl Rate {
             time: self.time + l.time,
         }
     }
-}
-pub struct Calculator {
-    cfg: RaceConfig,
-    laps: Vec<Lap>,
-    race_lap: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,19 +80,28 @@ pub struct Strategy {
     stops: Vec<Pitstop>,
 }
 
-enum RaceEnding {
+#[derive(Clone, Copy, Debug)]
+enum EndsWith {
     Laps(usize),                 // race ends after this many more laps
     Time(Duration),              // race ends after this much more time
     LapsOrTime(usize, Duration), // first of the above 2 to happen
 }
+
 struct StratRequest {
     fuel_left: f32,
     tank_size: f32,
     yellow_togo: i32,
-    race: RaceEnding, // for a laps race, RaceEnding laps is total laps to go, regardless of yellow/green.
+    ends: EndsWith, // for a laps race, EndsWith laps is total laps to go, regardless of yellow/green.
     green: Rate,
     yellow: Rate,
 }
+
+pub struct Calculator {
+    cfg: RaceConfig,
+    laps: Vec<Lap>,
+    race_lap: i32,
+}
+
 impl Calculator {
     pub fn new(cfg: RaceConfig) -> Calculator {
         Calculator {
@@ -128,15 +131,7 @@ impl Calculator {
             })
         }
     }
-    fn laps_remaining(&self) -> i32 {
-        if self.cfg.laps.is_some() {
-            self.cfg.laps.unwrap() - self.race_lap + 1
-        } else if self.cfg.time.is_some() {
-            13
-        } else {
-            42
-        }
-    }
+
     pub fn strat(&self) -> Vec<Strategy> {
         let green = self.recent_green();
         if green.is_none() {
@@ -150,7 +145,7 @@ impl Calculator {
             fuel_left: self.laps.last().unwrap().fuel_left,
             tank_size: self.cfg.fuel_tank_size,
             yellow_togo: 0,
-            race: RaceEnding::Laps(self.laps_remaining() as usize),
+            ends: self.cfg.ends,
             green: green.unwrap(),
             yellow: yellow,
         };
@@ -167,10 +162,10 @@ fn strat_fwd(r: &StratRequest) -> Strategy {
     let laps = yellow.chain(iter::repeat(r.green)).take_while(|lap| {
         tm = tm.add(lap.time);
         laps += 1;
-        match r.race {
-            RaceEnding::Laps(l) => laps <= l,
-            RaceEnding::Time(d) => tm <= d,
-            RaceEnding::LapsOrTime(l, d) => laps <= l && tm <= d,
+        match r.ends {
+            EndsWith::Laps(l) => laps <= l,
+            EndsWith::Time(d) => tm <= d,
+            EndsWith::LapsOrTime(l, d) => laps <= l && tm <= d,
         }
     });
     // the laps iterator will return the sequence of predicted laps until the conclusion of the race
@@ -192,12 +187,10 @@ fn strat_fwd(r: &StratRequest) -> Strategy {
     }
 
     let full_stint_len = round::floor((r.tank_size / r.green.fuel) as f64, 0) as i32;
-    let max_stint_laps = (stints.len() as i32 - 1) * full_stint_len;
-    let act_stint_laps: i32 = stints.iter().skip(1).sum();
     let mut stops = Vec::with_capacity(stints.len());
     let mut lap_open = 0;
     let mut lap_close = 0;
-    let mut ext = max_stint_laps - act_stint_laps;
+    let mut ext = full_stint_len - stints.last().unwrap();
     for i in 0..stints.len() - 1 {
         // we can bring this stop forward by extending a later stop
         let wdw_size = cmp::min(ext, stints[i]);
@@ -247,7 +240,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 20.0,
             yellow_togo: 0,
-            race: RaceEnding::Laps(5),
+            ends: EndsWith::Laps(5),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -263,7 +256,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 10.0,
             yellow_togo: 0,
-            race: RaceEnding::Laps(34),
+            ends: EndsWith::Laps(34),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -279,7 +272,7 @@ mod tests {
             fuel_left: 5.0,
             tank_size: 10.0,
             yellow_togo: 2,
-            race: RaceEnding::Time(Duration::new(300, 0)),
+            ends: EndsWith::Time(Duration::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
@@ -298,7 +291,7 @@ mod tests {
             fuel_left: 5.0,
             tank_size: 10.0,
             yellow_togo: 2,
-            race: RaceEnding::LapsOrTime(100, Duration::new(300, 0)),
+            ends: EndsWith::LapsOrTime(100, Duration::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
@@ -317,7 +310,7 @@ mod tests {
             fuel_left: 5.0,
             tank_size: 10.0,
             yellow_togo: 2,
-            race: RaceEnding::LapsOrTime(10, Duration::new(3000, 0)),
+            ends: EndsWith::LapsOrTime(10, Duration::new(3000, 0)),
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
@@ -336,7 +329,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 10.0,
             yellow_togo: 3,
-            race: RaceEnding::Laps(23),
+            ends: EndsWith::Laps(23),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate {
                 fuel: 0.1,
@@ -355,7 +348,7 @@ mod tests {
             fuel_left: 9.3,
             tank_size: 10.0,
             yellow_togo: 0,
-            race: RaceEnding::Laps(49),
+            ends: EndsWith::Laps(49),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -371,7 +364,7 @@ mod tests {
             fuel_left: 9.3,
             tank_size: 10.0,
             yellow_togo: 0,
-            race: RaceEnding::Laps(24),
+            ends: EndsWith::Laps(24),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -387,7 +380,7 @@ mod tests {
             fuel_left: 1.5,
             tank_size: 10.0,
             yellow_togo: 0,
-            race: RaceEnding::Laps(29),
+            ends: EndsWith::Laps(29),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -403,7 +396,7 @@ mod tests {
             fuel_left: 9.6,
             tank_size: 10.0,
             yellow_togo: 0,
-            race: RaceEnding::Laps(58),
+            ends: EndsWith::Laps(58),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
