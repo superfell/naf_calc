@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 use math::round;
 use std::cmp;
+use std::fmt;
 use std::time::Duration;
 
 bitflags! {
@@ -52,10 +53,27 @@ pub struct Calculator {
     race_lap: i32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pitstop {
     open: i32,
     close: i32,
+}
+impl Pitstop {
+    fn new(open: i32, close: i32) -> Pitstop {
+        Pitstop {
+            open: open,
+            close: close,
+        }
+    }
+}
+impl fmt::Display for Pitstop {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Pitstop window opens:{}, closes:{}",
+            self.open, self.close
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -162,8 +180,6 @@ fn strat_fwd(r: &StratRequest) -> Strategy {
         lap_close += stints[i];
         ext -= wdw_size;
     }
-    println!("{:?}", stints);
-    println!("{:?}", stops);
     Strategy {
         stints: stints,
         stops: stops,
@@ -171,6 +187,7 @@ fn strat_fwd(r: &StratRequest) -> Strategy {
 }
 
 // a strategy that backtimes from the finish, i.e. the last stint is a full tank.
+// don't think this is needed, as the fwd_window calcs will produce the equivilent data.
 fn strat_rev(r: &StratRequest) -> Strategy {
     let mut stints = Vec::with_capacity(4);
     let mut togo = r.green_laps_togo;
@@ -237,6 +254,8 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![5], s.stints);
+        assert_eq!(Vec::<Pitstop>::new(), s.stops);
+
         let s = strat_rev(&r);
         assert_eq!(vec![5], s.stints);
     }
@@ -254,6 +273,8 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![19, 15], s.stints);
+        assert_eq!(vec![Pitstop::new(14, 19)], s.stops);
+
         let s = strat_rev(&r);
         assert_eq!(vec![14, 20], s.stints);
     }
@@ -271,6 +292,7 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![18, 20, 11], s.stints);
+        assert_eq!(vec![Pitstop::new(9, 18), Pitstop::new(29, 38)], s.stops);
 
         let s = strat_rev(&r);
         assert_eq!(vec![9, 20, 20], s.stints);
@@ -289,6 +311,8 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![18, 6], s.stints);
+        assert_eq!(vec![Pitstop::new(4, 18)], s.stops);
+
         let s = strat_rev(&r);
         assert_eq!(vec![4, 20], s.stints);
     }
@@ -306,6 +330,8 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![3, 20, 6], s.stints);
+        assert_eq!(vec![Pitstop::new(0, 3), Pitstop::new(9, 23)], s.stops);
+
         let s = strat_rev(&r);
         assert_eq!(vec![3, 6, 20], s.stints);
     }
@@ -323,6 +349,8 @@ mod tests {
         };
         let s = strat_fwd(&r);
         assert_eq!(vec![19, 20, 19], s.stints);
+        assert_eq!(vec![Pitstop::new(18, 19), Pitstop::new(38, 39)], s.stops);
+
         let s = strat_rev(&r);
         assert_eq!(vec![18, 20, 20], s.stints);
     }
