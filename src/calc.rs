@@ -1,8 +1,11 @@
+#![allow(dead_code)]
+
 use bitflags::bitflags;
 use math::round;
 use std::cmp;
 use std::fmt;
 use std::iter;
+use std::ops::Add;
 use std::time::Duration;
 
 bitflags! {
@@ -83,12 +86,16 @@ pub struct Strategy {
     stops: Vec<Pitstop>,
 }
 
+enum RaceEnding {
+    Laps(usize),                 // race ends after this many more laps
+    Time(Duration),              // race ends after this much more time
+    LapsOrTime(usize, Duration), // first of the above 2 to happen
+}
 struct StratRequest {
     fuel_left: f32,
     tank_size: f32,
     yellow_togo: i32,
-    green_laps_togo: Option<i32>,
-    time_togo: Option<Duration>,
+    race: RaceEnding, // for a laps race, RaceEnding laps is total laps to go, regardless of yellow/green.
     green: Rate,
     yellow: Rate,
 }
@@ -143,8 +150,7 @@ impl Calculator {
             fuel_left: self.laps.last().unwrap().fuel_left,
             tank_size: self.cfg.fuel_tank_size,
             yellow_togo: 0,
-            green_laps_togo: Some(self.laps_remaining()),
-            time_togo: None,
+            race: RaceEnding::Laps(self.laps_remaining() as usize),
             green: green.unwrap(),
             yellow: yellow,
         };
@@ -155,25 +161,30 @@ impl Calculator {
 
 // a strategy that starts now, and repeatedly runs the tank dry until we're done
 fn strat_fwd(r: &StratRequest) -> Strategy {
+    let yellow = iter::repeat(r.yellow).take(r.yellow_togo as usize);
+    let mut tm = Duration::ZERO;
+    let mut laps = 0;
+    let laps = yellow.chain(iter::repeat(r.green)).take_while(|lap| {
+        tm = tm.add(lap.time);
+        laps += 1;
+        match r.race {
+            RaceEnding::Laps(l) => laps <= l,
+            RaceEnding::Time(d) => tm <= d,
+            RaceEnding::LapsOrTime(l, d) => laps <= l && tm <= d,
+        }
+    });
+    // the laps iterator will return the sequence of predicted laps until the conclusion of the race
+
     let mut stints = Vec::with_capacity(4);
     let mut f = r.fuel_left;
-    let yellow = iter::repeat(r.yellow).take(r.yellow_togo as usize);
-    let green = match r.green_laps_togo {
-        // the take(i32:MAX) allows both match arms to return the same type (a Take<T>)
-        // ideally green would be Iter<T> but that's a trait, and you'd need to box the value for that to be possible.
-        // https://stackoverflow.com/questions/26378842/how-do-i-overcome-match-arms-with-incompatible-types-for-structs-implementing-sa
-        None => iter::repeat(r.green).take(i32::MAX as usize),
-        Some(g) => iter::repeat(r.green).take(g as usize),
-    };
-    let rates = yellow.chain(green);
     let mut stint = 0;
-    for rt in rates {
-        if f < rt.fuel {
+    for lap in laps {
+        if f < lap.fuel {
             stints.push(stint);
             stint = 0;
             f = r.tank_size;
         }
-        f -= rt.fuel;
+        f -= lap.fuel;
         stint += 1;
     }
     if stint > 0 {
@@ -236,8 +247,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 20.0,
             yellow_togo: 0,
-            green_laps_togo: Some(5),
-            time_togo: None,
+            race: RaceEnding::Laps(5),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -247,14 +257,13 @@ mod tests {
     }
 
     #[test]
-    fn strat_one_stop() {
+    fn strat_one_stop_laps() {
         let d = Duration::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: Some(34),
-            time_togo: None,
+            race: RaceEnding::Laps(34),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -264,14 +273,70 @@ mod tests {
     }
 
     #[test]
+    fn strat_one_stop_time() {
+        let d = Duration::new(30, 0);
+        let r = StratRequest {
+            fuel_left: 5.0,
+            tank_size: 10.0,
+            yellow_togo: 2,
+            race: RaceEnding::Time(Duration::new(300, 0)),
+            green: Rate { fuel: 1.0, time: d },
+            yellow: Rate {
+                fuel: 0.1,
+                time: Duration::new(60, 0),
+            },
+        };
+        let s = strat_fwd(&r);
+        assert_eq!(vec![6, 2], s.stints);
+        assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
+    }
+
+    #[test]
+    fn strat_one_stop_laps_or_time_ends_on_time() {
+        let d = Duration::new(30, 0);
+        let r = StratRequest {
+            fuel_left: 5.0,
+            tank_size: 10.0,
+            yellow_togo: 2,
+            race: RaceEnding::LapsOrTime(100, Duration::new(300, 0)),
+            green: Rate { fuel: 1.0, time: d },
+            yellow: Rate {
+                fuel: 0.1,
+                time: Duration::new(60, 0),
+            },
+        };
+        let s = strat_fwd(&r);
+        assert_eq!(vec![6, 2], s.stints);
+        assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
+    }
+
+    #[test]
+    fn strat_one_stop_laps_or_time_ends_on_laps() {
+        let d = Duration::new(30, 0);
+        let r = StratRequest {
+            fuel_left: 5.0,
+            tank_size: 10.0,
+            yellow_togo: 2,
+            race: RaceEnding::LapsOrTime(10, Duration::new(3000, 0)),
+            green: Rate { fuel: 1.0, time: d },
+            yellow: Rate {
+                fuel: 0.1,
+                time: Duration::new(60, 0),
+            },
+        };
+        let s = strat_fwd(&r);
+        assert_eq!(vec![6, 4], s.stints);
+        assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
+    }
+
+    #[test]
     fn strat_one_stop_yellow() {
         let d = Duration::new(25, 0);
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 10.0,
             yellow_togo: 3,
-            green_laps_togo: Some(20),
-            time_togo: None,
+            race: RaceEnding::Laps(23),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate {
                 fuel: 0.1,
@@ -290,8 +355,7 @@ mod tests {
             fuel_left: 9.3,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: Some(49),
-            time_togo: None,
+            race: RaceEnding::Laps(49),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -307,8 +371,7 @@ mod tests {
             fuel_left: 9.3,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: Some(24),
-            time_togo: None,
+            race: RaceEnding::Laps(24),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -324,8 +387,7 @@ mod tests {
             fuel_left: 1.5,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: Some(29),
-            time_togo: None,
+            race: RaceEnding::Laps(29),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -341,8 +403,7 @@ mod tests {
             fuel_left: 9.6,
             tank_size: 10.0,
             yellow_togo: 0,
-            green_laps_togo: Some(58),
-            time_togo: None,
+            race: RaceEnding::Laps(58),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
