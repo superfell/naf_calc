@@ -1,5 +1,6 @@
 mod calc;
 mod ir;
+mod strat;
 
 #[derive(Clone, Copy, Debug)]
 struct CarState {
