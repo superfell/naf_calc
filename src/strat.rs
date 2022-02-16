@@ -48,11 +48,11 @@ impl Rate {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pitstop {
-    open: i32,
-    close: i32,
+    pub open: i32,
+    pub close: i32,
 }
 impl Pitstop {
-    fn new(open: i32, close: i32) -> Pitstop {
+    pub fn new(open: i32, close: i32) -> Pitstop {
         Pitstop {
             open: open,
             close: close,
@@ -71,8 +71,8 @@ impl fmt::Display for Pitstop {
 
 #[derive(Clone, Debug)]
 pub struct Strategy {
-    stints: Vec<i32>,
-    stops: Vec<Pitstop>,
+    pub stints: Vec<i32>,
+    pub stops: Vec<Pitstop>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +85,7 @@ pub enum EndsWith {
 pub struct StratRequest {
     pub fuel_left: f32,
     pub tank_size: f32,
-    pub yellow_togo: i32,
+    pub yellow_togo: usize,
     pub ends: EndsWith, // for a laps race, EndsWith laps is total laps to go, regardless of yellow/green.
     pub green: Rate,
     pub yellow: Rate,
