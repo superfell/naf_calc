@@ -115,6 +115,15 @@ pub struct Strategy {
     pub stops: Vec<Pitstop>,
     pub fuel_to_save: f32, // ammount of fuel to save to reduce # of pitstops needed
 }
+impl Default for Strategy {
+    fn default() -> Strategy {
+        Strategy {
+            stints: vec![],
+            stops: vec![],
+            fuel_to_save: 0.0,
+        }
+    }
+}
 impl Strategy {
     pub fn laps(&self) -> Vec<usize> {
         self.stints.iter().map(|s| s.laps).collect()
@@ -139,8 +148,24 @@ pub struct StratRequest {
 }
 
 impl StratRequest {
-    // a strategy that starts now, and repeatedly runs the tank dry until we're done
+    // Compute fuel strategy. The base strategy repeatedly runs the tank dry until the end of the race.
+    // Pit stop windows are extended based on the size of the last stint. If the last stint isn't a full
+    // tank then you can stop earlier and still complete the last stint. This cascades back into all
+    // the pit windows.
     pub fn compute(&self) -> Strategy {
+        let stints = self.stints();
+        if stints.is_empty() {
+            Strategy::default()
+        } else {
+            Strategy {
+                fuel_to_save: self.fuel_save(&stints),
+                stops: self.stops(&stints),
+                stints: stints,
+            }
+        }
+    }
+
+    fn stints(&self) -> Vec<Stint> {
         let yellow = iter::repeat(self.yellow).take(self.yellow_togo as usize);
         let mut tm = Duration::ZERO;
         let mut laps = 0;
@@ -170,33 +195,27 @@ impl StratRequest {
         if stint.laps > 0 {
             stints.push(stint);
         }
-
-        let mut stops = Vec::with_capacity(stints.len());
-        if !stints.is_empty() {
-            let full_stint_len =
-                round::floor((self.tank_size / self.green.fuel) as f64, 0) as usize;
-            let mut lap_open = 0;
-            let mut lap_close = 0;
-            let mut ext = full_stint_len - stints.last().unwrap().laps;
-            for i in 0..stints.len() - 1 {
-                // we can bring this stop forward by extending a later stop
-                let wdw_size = cmp::min(ext, stints[i].laps);
-                stops.push(Pitstop {
-                    open: lap_open + stints[i].laps - wdw_size,
-                    close: lap_close + stints[i].laps,
-                });
-                lap_open += stints[i].laps - wdw_size;
-                lap_close += stints[i].laps;
-                ext -= wdw_size;
-            }
-        }
-        Strategy {
-            fuel_to_save: self.compute_fuel_save(&stints),
-            stints: stints,
-            stops: stops,
-        }
+        stints
     }
-    fn compute_fuel_save(&self, stints: &Vec<Stint>) -> f32 {
+
+    fn stops(&self, stints: &Vec<Stint>) -> Vec<Pitstop> {
+        let mut stops = Vec::with_capacity(stints.len());
+        let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as usize;
+        let mut lap_open = 0;
+        let mut lap_close = 0;
+        let mut ext = full_stint_len - stints.last().unwrap().laps;
+        for i in 0..stints.len() - 1 {
+            // we can bring this stop forward by extending a later stop
+            let wdw_size = cmp::min(ext, stints[i].laps);
+            lap_open += stints[i].laps - wdw_size;
+            lap_close += stints[i].laps;
+            stops.push(Pitstop::new(lap_open, lap_close));
+            ext -= wdw_size;
+        }
+        stops
+    }
+
+    fn fuel_save(&self, stints: &Vec<Stint>) -> f32 {
         if stints.len() == 0 {
             0.0
         } else {
