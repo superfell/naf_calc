@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
-use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, StratRequest, Strategy};
+use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy};
 use std::cmp;
-use std::time::Duration;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RaceConfig {
@@ -127,6 +126,7 @@ impl Calculator {
 
 #[cfg(test)]
 mod tests {
+    use super::super::strat::Pitstop;
     use super::*;
     use std::time::Duration;
 
