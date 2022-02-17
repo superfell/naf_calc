@@ -216,17 +216,13 @@ impl StratRequest {
     }
 
     fn fuel_save(&self, stints: &Vec<Stint>) -> f32 {
-        if stints.len() == 0 {
-            0.0
+        let total: f32 = stints.iter().map(|s| s.fuel).sum();
+        let max_save = total * self.max_fuel_save;
+        let last_stint_fuel = stints.last().unwrap().fuel;
+        if last_stint_fuel < max_save {
+            last_stint_fuel
         } else {
-            let total: f32 = stints.iter().map(|s| s.fuel).sum();
-            let max_save = total * self.max_fuel_save;
-            let last_stint_fuel = stints.last().unwrap().fuel;
-            if last_stint_fuel < max_save {
-                last_stint_fuel
-            } else {
-                0.0
-            }
+            0.0
         }
     }
 }
