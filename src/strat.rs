@@ -171,21 +171,24 @@ impl StratRequest {
             stints.push(stint);
         }
 
-        let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as usize;
         let mut stops = Vec::with_capacity(stints.len());
-        let mut lap_open = 0;
-        let mut lap_close = 0;
-        let mut ext = full_stint_len - stints.last().unwrap().laps;
-        for i in 0..stints.len() - 1 {
-            // we can bring this stop forward by extending a later stop
-            let wdw_size = cmp::min(ext, stints[i].laps);
-            stops.push(Pitstop {
-                open: lap_open + stints[i].laps - wdw_size,
-                close: lap_close + stints[i].laps,
-            });
-            lap_open += stints[i].laps - wdw_size;
-            lap_close += stints[i].laps;
-            ext -= wdw_size;
+        if !stints.is_empty() {
+            let full_stint_len =
+                round::floor((self.tank_size / self.green.fuel) as f64, 0) as usize;
+            let mut lap_open = 0;
+            let mut lap_close = 0;
+            let mut ext = full_stint_len - stints.last().unwrap().laps;
+            for i in 0..stints.len() - 1 {
+                // we can bring this stop forward by extending a later stop
+                let wdw_size = cmp::min(ext, stints[i].laps);
+                stops.push(Pitstop {
+                    open: lap_open + stints[i].laps - wdw_size,
+                    close: lap_close + stints[i].laps,
+                });
+                lap_open += stints[i].laps - wdw_size;
+                lap_close += stints[i].laps;
+                ext -= wdw_size;
+            }
         }
         Strategy {
             fuel_to_save: self.compute_fuel_save(&stints),
@@ -249,6 +252,24 @@ mod tests {
         let s = r.compute();
         assert_eq!(vec![5], s.laps());
         assert_eq!(Vec::<Pitstop>::new(), s.stops);
+    }
+
+    #[test]
+    fn strat_race_over() {
+        let d = Duration::new(40, 0);
+        let r = StratRequest {
+            fuel_left: 0.9,
+            tank_size: 20.0,
+            max_fuel_save: 0.1,
+            yellow_togo: 0,
+            ends: EndsWith::Laps(0),
+            green: Rate { fuel: 0.5, time: d },
+            yellow: Rate { fuel: 0.1, time: d },
+        };
+        let s = r.compute();
+        assert!(s.stints.is_empty());
+        assert!(s.stops.is_empty());
+        assert_eq!(0.0, s.fuel_to_save);
     }
 
     #[test]
