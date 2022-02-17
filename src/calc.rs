@@ -5,8 +5,9 @@ use std::cmp;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RaceConfig {
-    fuel_tank_size: f32,
     ends: EndsWith,
+    fuel_tank_size: f32,
+    max_fuel_save: f32,
     track_id: i32,
     layout_id: i32,
     car_id: i32,
@@ -108,6 +109,7 @@ impl Calculator {
         let r = StratRequest {
             fuel_left: fuel_left,
             tank_size: self.cfg.fuel_tank_size,
+            max_fuel_save: self.cfg.max_fuel_save,
             // a yellow flag is usually at least 3 laps.
             // TODO, can we detect the 2/1 togo state from iRacing?
             yellow_togo: if yellow_laps > 0 {
@@ -136,6 +138,7 @@ mod tests {
         // and this would generate a starting strategy
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
+            max_fuel_save: 0.0,
             ends: EndsWith::Laps(50),
             track_id: 1,
             layout_id: 1,
@@ -150,6 +153,7 @@ mod tests {
     fn one_lap() {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
+            max_fuel_save: 0.0,
             ends: EndsWith::Laps(50),
             track_id: 1,
             layout_id: 1,
@@ -179,6 +183,7 @@ mod tests {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
             ends: EndsWith::Laps(50),
+            max_fuel_save: 0.0,
             track_id: 1,
             layout_id: 1,
             car_id: 1,
@@ -219,6 +224,7 @@ mod tests {
     fn yellow() {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
+            max_fuel_save: 0.0,
             ends: EndsWith::Laps(50),
             track_id: 1,
             layout_id: 1,

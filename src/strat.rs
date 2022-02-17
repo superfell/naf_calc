@@ -113,6 +113,7 @@ impl fmt::Display for Stint {
 pub struct Strategy {
     pub stints: Vec<Stint>,
     pub stops: Vec<Pitstop>,
+    pub fuel_to_save: f32, // ammount of fuel to save to reduce # of pitstops needed
 }
 impl Strategy {
     pub fn laps(&self) -> Vec<usize> {
@@ -130,6 +131,7 @@ pub enum EndsWith {
 pub struct StratRequest {
     pub fuel_left: f32,
     pub tank_size: f32,
+    pub max_fuel_save: f32,
     pub yellow_togo: usize,
     pub ends: EndsWith, // for a laps race, EndsWith laps is total laps to go, regardless of yellow/green.
     pub green: Rate,
@@ -186,8 +188,23 @@ impl StratRequest {
             ext -= wdw_size;
         }
         Strategy {
+            fuel_to_save: self.compute_fuel_save(&stints),
             stints: stints,
             stops: stops,
+        }
+    }
+    fn compute_fuel_save(&self, stints: &Vec<Stint>) -> f32 {
+        if stints.len() == 0 {
+            0.0
+        } else {
+            let total: f32 = stints.iter().map(|s| s.fuel).sum();
+            let max_save = total * self.max_fuel_save;
+            let last_stint_fuel = stints.last().unwrap().fuel;
+            if last_stint_fuel < max_save {
+                last_stint_fuel
+            } else {
+                0.0
+            }
         }
     }
 }
@@ -223,6 +240,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 20.0,
+            max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(5),
             green: Rate { fuel: 0.5, time: d },
@@ -239,6 +257,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(34),
             green: Rate { fuel: 0.5, time: d },
@@ -255,6 +274,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 5.0,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 2,
             ends: EndsWith::Time(Duration::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
@@ -274,6 +294,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 5.0,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 2,
             ends: EndsWith::LapsOrTime(100, Duration::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
@@ -293,6 +314,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 5.0,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 2,
             ends: EndsWith::LapsOrTime(10, Duration::new(3000, 0)),
             green: Rate { fuel: 1.0, time: d },
@@ -312,6 +334,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 3,
             ends: EndsWith::Laps(23),
             green: Rate { fuel: 0.5, time: d },
@@ -331,6 +354,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.3,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(49),
             green: Rate { fuel: 0.5, time: d },
@@ -347,6 +371,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.3,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(24),
             green: Rate { fuel: 0.5, time: d },
@@ -363,6 +388,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 1.5,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(29),
             green: Rate { fuel: 0.5, time: d },
@@ -379,6 +405,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.6,
             tank_size: 10.0,
+            max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(58),
             green: Rate { fuel: 0.5, time: d },
@@ -387,5 +414,34 @@ mod tests {
         let s = r.compute();
         assert_eq!(vec![19, 20, 19], s.laps());
         assert_eq!(vec![Pitstop::new(18, 19), Pitstop::new(38, 39)], s.stops);
+    }
+
+    #[test]
+    fn strat_two_stops_fuel_save() {
+        let d = Duration::new(40, 0);
+        let r = StratRequest {
+            fuel_left: 9.0,
+            tank_size: 20.0,
+            max_fuel_save: 0.1, //10%
+            yellow_togo: 0,
+            ends: EndsWith::Laps(50),
+            green: Rate { fuel: 1.0, time: d },
+            yellow: Rate {
+                fuel: 0.1,
+                time: d * 4,
+            },
+        };
+        let s = r.compute();
+        assert_eq!(vec![9, 20, 20, 1], s.laps());
+        assert_eq!(
+            vec![
+                Pitstop::new(0, 9),
+                Pitstop::new(10, 29),
+                Pitstop::new(30, 49)
+            ],
+            s.stops
+        );
+        // if you can save 1 liter, you can skip the last pit stop
+        assert_eq!(1.0, s.fuel_to_save);
     }
 }
