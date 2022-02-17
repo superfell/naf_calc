@@ -167,7 +167,7 @@ mod tests {
         );
         let strat = calc.strat();
         assert_eq!(1, strat.len());
-        assert_eq!(vec![19, 20, 10], strat[0].stints);
+        assert_eq!(vec![19, 20, 10], strat[0].laps());
         assert_eq!(
             vec![Pitstop::new(9, 19), Pitstop::new(29, 39)],
             strat[0].stops
@@ -193,7 +193,7 @@ mod tests {
         calc.add_lap(lap, 1);
         let strat = calc.strat();
         assert_eq!(1, strat.len());
-        assert_eq!(vec![19, 20, 10], strat[0].stints);
+        assert_eq!(vec![19, 20, 10], strat[0].laps());
         assert_eq!(
             vec![Pitstop::new(9, 19), Pitstop::new(29, 39)],
             strat[0].stops
@@ -208,7 +208,7 @@ mod tests {
         calc.add_lap(lap, 5);
         let strat = calc.strat();
         assert_eq!(1, strat.len());
-        assert_eq!(vec![15, 20, 10], strat[0].stints);
+        assert_eq!(vec![15, 20, 10], strat[0].laps());
         assert_eq!(
             vec![Pitstop::new(5, 15), Pitstop::new(25, 35)],
             strat[0].stops
@@ -234,7 +234,7 @@ mod tests {
         calc.add_lap(lap, 1);
         let strat = calc.strat();
         assert_eq!(1, strat.len());
-        assert_eq!(vec![9, 10, 10, 10, 10], strat[0].stints);
+        assert_eq!(vec![9, 10, 10, 10, 10], strat[0].laps());
 
         lap.fuel_left -= 1.0;
         calc.add_lap(lap, 2);
@@ -244,7 +244,7 @@ mod tests {
         calc.add_lap(lap, 4);
         let strat = calc.strat();
         assert_eq!(1, strat.len());
-        assert_eq!(vec![6, 10, 10, 10, 10], strat[0].stints);
+        assert_eq!(vec![6, 10, 10, 10, 10], strat[0].laps());
 
         lap.fuel_left -= 0.5;
         lap.condition = LapState::YELLOW;
@@ -255,6 +255,6 @@ mod tests {
 
         let strat = calc.strat();
         assert_eq!(1, strat.len());
-        assert_eq!(vec![5, 10, 10, 10, 9], strat[0].stints);
+        assert_eq!(vec![5, 10, 10, 10, 9], strat[0].laps());
     }
 }

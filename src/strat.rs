@@ -48,11 +48,11 @@ impl Rate {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pitstop {
-    pub open: i32,
-    pub close: i32,
+    pub open: usize,
+    pub close: usize,
 }
 impl Pitstop {
-    pub fn new(open: i32, close: i32) -> Pitstop {
+    pub fn new(open: usize, close: usize) -> Pitstop {
         Pitstop {
             open: open,
             close: close,
@@ -69,10 +69,55 @@ impl fmt::Display for Pitstop {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Stint {
+    laps: usize,
+    fuel: f32,
+    time: Duration,
+}
+impl Stint {
+    fn new() -> Stint {
+        Stint {
+            laps: 0,
+            fuel: 0.0,
+            time: Duration::ZERO,
+        }
+    }
+    fn add(&mut self, lap: &Rate) {
+        self.laps += 1;
+        self.fuel += lap.fuel;
+        self.time += lap.time;
+    }
+    fn formatted_time(&self) -> String {
+        if self.time < Duration::new(60, 0) {
+            format!("{}s", self.time.as_secs())
+        } else {
+            let s = self.time.as_secs();
+            format!("{}:{:2}", s / 60, s % 60)
+        }
+    }
+}
+impl fmt::Display for Stint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Stint {} laps, uses {} fuel, takes {}",
+            self.laps,
+            self.fuel,
+            self.formatted_time()
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Strategy {
-    pub stints: Vec<i32>,
+    pub stints: Vec<Stint>,
     pub stops: Vec<Pitstop>,
+}
+impl Strategy {
+    pub fn laps(&self) -> Vec<usize> {
+        self.stints.iter().map(|s| s.laps).collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -110,34 +155,34 @@ impl StratRequest {
 
         let mut stints = Vec::with_capacity(4);
         let mut f = self.fuel_left;
-        let mut stint = 0;
+        let mut stint = Stint::new();
         for lap in laps {
             if f < lap.fuel {
                 stints.push(stint);
-                stint = 0;
+                stint = Stint::new();
                 f = self.tank_size;
             }
+            stint.add(&lap);
             f -= lap.fuel;
-            stint += 1;
         }
-        if stint > 0 {
+        if stint.laps > 0 {
             stints.push(stint);
         }
 
-        let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as i32;
+        let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as usize;
         let mut stops = Vec::with_capacity(stints.len());
         let mut lap_open = 0;
         let mut lap_close = 0;
-        let mut ext = full_stint_len - stints.last().unwrap();
+        let mut ext = full_stint_len - stints.last().unwrap().laps;
         for i in 0..stints.len() - 1 {
             // we can bring this stop forward by extending a later stop
-            let wdw_size = cmp::min(ext, stints[i]);
+            let wdw_size = cmp::min(ext, stints[i].laps);
             stops.push(Pitstop {
-                open: lap_open + stints[i] - wdw_size,
-                close: lap_close + stints[i],
+                open: lap_open + stints[i].laps - wdw_size,
+                close: lap_close + stints[i].laps,
             });
-            lap_open += stints[i] - wdw_size;
-            lap_close += stints[i];
+            lap_open += stints[i].laps - wdw_size;
+            lap_close += stints[i].laps;
             ext -= wdw_size;
         }
         Strategy {
@@ -184,7 +229,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert_eq!(vec![5], s.stints);
+        assert_eq!(vec![5], s.laps());
         assert_eq!(Vec::<Pitstop>::new(), s.stops);
     }
 
@@ -200,7 +245,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert_eq!(vec![19, 15], s.stints);
+        assert_eq!(vec![19, 15], s.laps());
         assert_eq!(vec![Pitstop::new(14, 19)], s.stops);
     }
 
@@ -219,7 +264,7 @@ mod tests {
             },
         };
         let s = r.compute();
-        assert_eq!(vec![6, 2], s.stints);
+        assert_eq!(vec![6, 2], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
 
@@ -238,7 +283,7 @@ mod tests {
             },
         };
         let s = r.compute();
-        assert_eq!(vec![6, 2], s.stints);
+        assert_eq!(vec![6, 2], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
 
@@ -257,7 +302,7 @@ mod tests {
             },
         };
         let s = r.compute();
-        assert_eq!(vec![6, 4], s.stints);
+        assert_eq!(vec![6, 4], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
 
@@ -276,7 +321,7 @@ mod tests {
             },
         };
         let s = r.compute();
-        assert_eq!(vec![21, 2], s.stints);
+        assert_eq!(vec![21, 2], s.laps());
         assert_eq!(vec![Pitstop::new(3, 21)], s.stops);
     }
 
@@ -292,7 +337,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert_eq!(vec![18, 20, 11], s.stints);
+        assert_eq!(vec![18, 20, 11], s.laps());
         assert_eq!(vec![Pitstop::new(9, 18), Pitstop::new(29, 38)], s.stops);
     }
 
@@ -308,7 +353,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert_eq!(vec![18, 6], s.stints);
+        assert_eq!(vec![18, 6], s.laps());
         assert_eq!(vec![Pitstop::new(4, 18)], s.stops);
     }
 
@@ -324,7 +369,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert_eq!(vec![3, 20, 6], s.stints);
+        assert_eq!(vec![3, 20, 6], s.laps());
         assert_eq!(vec![Pitstop::new(0, 3), Pitstop::new(9, 23)], s.stops);
     }
 
@@ -340,7 +385,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert_eq!(vec![19, 20, 19], s.stints);
+        assert_eq!(vec![19, 20, 19], s.laps());
         assert_eq!(vec![Pitstop::new(18, 19), Pitstop::new(38, 39)], s.stops);
     }
 }
