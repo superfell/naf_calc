@@ -10,9 +10,11 @@ use std::time::Duration;
 
 bitflags! {
     pub struct LapState:i32 {
-        const YELLOW = 1;
-        const PITTED = 2;
-        const PACE_LAP = 4;
+        const YELLOW =      0x01;
+        const PITTED =      0x02;
+        const PACE_LAP =    0x04;
+        const ONE_TO_GREEN = 0x08;
+        const TWO_TO_GREEN = 0x10;
     }
 }
 
@@ -48,15 +50,12 @@ impl Rate {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pitstop {
-    pub open: usize,
-    pub close: usize,
+    pub open: i32,
+    pub close: i32,
 }
 impl Pitstop {
-    pub fn new(open: usize, close: usize) -> Pitstop {
-        Pitstop {
-            open: open,
-            close: close,
-        }
+    pub fn new(open: i32, close: i32) -> Pitstop {
+        Pitstop { open, close }
     }
 }
 impl fmt::Display for Pitstop {
@@ -71,7 +70,7 @@ impl fmt::Display for Pitstop {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stint {
-    pub laps: usize,
+    pub laps: i32,
     pub fuel: f32,
     pub time: Duration,
 }
@@ -129,7 +128,7 @@ impl Default for Strategy {
     }
 }
 impl Strategy {
-    pub fn laps(&self) -> Vec<usize> {
+    pub fn laps(&self) -> Vec<i32> {
         self.stints.iter().map(|s| s.laps).collect()
     }
 }
@@ -145,7 +144,7 @@ pub struct StratRequest {
     pub fuel_left: f32,
     pub tank_size: f32,
     pub max_fuel_save: f32,
-    pub yellow_togo: usize,
+    pub yellow_togo: i32,
     pub ends: EndsWith, // for a laps race, EndsWith laps is total laps to go, regardless of yellow/green.
     pub green: Rate,
     pub yellow: Rate,
@@ -156,18 +155,18 @@ impl StratRequest {
     // Pit stop windows are extended based on the size of the last stint. If the last stint isn't a full
     // tank then you can stop earlier and still complete the last stint. This cascades back into all
     // the pit windows.
-    pub fn compute(&self) -> Strategy {
+    pub fn compute(&self) -> Option<Strategy> {
         let stints = self.stints();
         if stints.is_empty() {
-            Strategy::default()
+            None
         } else {
-            Strategy {
+            Some(Strategy {
                 fuel_to_save: self.fuel_save(&stints),
                 stops: self.stops(&stints),
                 stints: stints,
                 green: self.green,
                 yellow: self.yellow,
-            }
+            })
         }
     }
 
@@ -209,7 +208,7 @@ impl StratRequest {
 
     fn stops(&self, stints: &Vec<Stint>) -> Vec<Pitstop> {
         let mut stops = Vec::with_capacity(stints.len());
-        let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as usize;
+        let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as i32;
         let mut lap_open = 0;
         let mut lap_close = 0;
         let mut ext = full_stint_len - stints.last().unwrap().laps;
@@ -273,7 +272,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![5], s.laps());
         assert_eq!(Vec::<Pitstop>::new(), s.stops);
     }
@@ -290,7 +289,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![5], s.laps());
     }
 
@@ -307,9 +306,7 @@ mod tests {
             yellow: Rate { fuel: 0.1, time: d },
         };
         let s = r.compute();
-        assert!(s.stints.is_empty());
-        assert!(s.stops.is_empty());
-        assert_eq!(0.0, s.fuel_to_save);
+        assert!(s.is_none());
     }
 
     #[test]
@@ -324,7 +321,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![19, 15], s.laps());
         assert_eq!(vec![Pitstop::new(14, 19)], s.stops);
     }
@@ -353,7 +350,7 @@ mod tests {
         //           7 t=260    f=9
         //           8 t=290    f=8
         //           9 t=320    f=7
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![6, 3], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
@@ -382,7 +379,7 @@ mod tests {
         //           7 t=260    f=9
         //           8 t=290    f=8
         //           9 t=320    f=7
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![6, 3], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
@@ -402,7 +399,7 @@ mod tests {
                 time: Duration::new(60, 0),
             },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![6, 4], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
@@ -422,7 +419,7 @@ mod tests {
                 time: d.mul_f32(5.0),
             },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![21, 2], s.laps());
         assert_eq!(vec![Pitstop::new(3, 21)], s.stops);
     }
@@ -439,7 +436,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![18, 20, 11], s.laps());
         assert_eq!(vec![Pitstop::new(9, 18), Pitstop::new(29, 38)], s.stops);
     }
@@ -456,7 +453,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![18, 6], s.laps());
         assert_eq!(vec![Pitstop::new(4, 18)], s.stops);
     }
@@ -473,7 +470,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![3, 20, 6], s.laps());
         assert_eq!(vec![Pitstop::new(0, 3), Pitstop::new(9, 23)], s.stops);
     }
@@ -490,7 +487,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![19, 20, 19], s.laps());
         assert_eq!(vec![Pitstop::new(18, 19), Pitstop::new(38, 39)], s.stops);
     }
@@ -510,7 +507,7 @@ mod tests {
                 time: d * 4,
             },
         };
-        let s = r.compute();
+        let s = r.compute().unwrap();
         assert_eq!(vec![9, 20, 20, 1], s.laps());
         assert_eq!(
             vec![
