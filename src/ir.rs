@@ -441,99 +441,36 @@ impl Client {
                 for i in 0..(*h).num_vars {
                     let vh = vhbase.add(i as usize);
                     let var = Var { hdr: *vh };
-                    if var.hdr.count > 1 {
+                    let fmt_val = if var.hdr.count > 1 {
                         match var.var_type() {
-                            VarType::BOOL => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.bools(&var)
-                            ),
-                            VarType::CHAR => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.chars(&var)
-                            ),
-                            VarType::INT => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.ints(&var)
-                            ),
-                            VarType::BITFIELD => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.bitfields(&var)
-                            ),
-                            VarType::FLOAT => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.floats(&var)
-                            ),
-                            VarType::DOUBLE => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.doubles(&var)
-                            ),
+                            VarType::BOOL => format!("{:?}", self.bools(&var)),
+                            VarType::CHAR => format!("{:?}", self.chars(&var)),
+                            VarType::INT => format!("{:?}", self.ints(&var)),
+                            VarType::BITFIELD => format!("{:?}", self.bitfields(&var)),
+                            VarType::FLOAT => format!("{:?}", self.floats(&var)),
+                            VarType::DOUBLE => format!("{:?}", self.doubles(&var)),
                             VarType::ETCOUNT => todo!(),
                         }
                     } else {
                         match var.var_type() {
-                            VarType::BOOL => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.bool(&var)
-                            ),
-                            VarType::CHAR => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.char(&var)
-                            ),
-                            VarType::INT => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.int(&var)
-                            ),
-                            VarType::BITFIELD => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.bitfield::<i32>(&var)
-                            ),
-                            VarType::FLOAT => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.float(&var)
-                            ),
-                            VarType::DOUBLE => println!(
-                                "{:20}: {:?}: {}: {:?}",
-                                var.name(),
-                                var.var_type(),
-                                var.count(),
-                                self.double(&var)
-                            ),
+                            VarType::BOOL => format!("{:?}", self.bool(&var)),
+                            VarType::CHAR => format!("{:?}", self.char(&var)),
+                            VarType::INT => format!("{:?}", self.int(&var)),
+                            VarType::BITFIELD => format!("{:?}", self.bitfield::<i32>(&var)),
+                            VarType::FLOAT => format!("{:?}", self.float(&var)),
+                            VarType::DOUBLE => format!("{:?}", self.double(&var)),
                             VarType::ETCOUNT => todo!(),
                         }
-                    }
+                    };
+                    println!(
+                        "{:20}: {:?}: {}: {}: {:?}\n{}",
+                        var.name(),
+                        var.var_type(),
+                        var.count(),
+                        var.hdr.count_as_time,
+                        fmt_val,
+                        var.desc(),
+                    );
                 }
             },
         }
