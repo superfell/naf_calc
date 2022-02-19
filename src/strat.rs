@@ -71,9 +71,9 @@ impl fmt::Display for Pitstop {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stint {
-    laps: usize,
-    fuel: f32,
-    time: Duration,
+    pub laps: usize,
+    pub fuel: f32,
+    pub time: Duration,
 }
 impl Stint {
     fn new() -> Stint {
@@ -114,6 +114,8 @@ pub struct Strategy {
     pub stints: Vec<Stint>,
     pub stops: Vec<Pitstop>,
     pub fuel_to_save: f32, // ammount of fuel to save to reduce # of pitstops needed
+    pub green: Rate,
+    pub yellow: Rate,
 }
 impl Default for Strategy {
     fn default() -> Strategy {
@@ -121,6 +123,8 @@ impl Default for Strategy {
             stints: vec![],
             stops: vec![],
             fuel_to_save: 0.0,
+            green: Rate::default(),
+            yellow: Rate::default(),
         }
     }
 }
@@ -132,9 +136,9 @@ impl Strategy {
 
 #[derive(Clone, Copy, Debug)]
 pub enum EndsWith {
-    Laps(usize),                 // race ends after this many more laps
-    Time(Duration),              // race ends after this much more time
-    LapsOrTime(usize, Duration), // first of the above 2 to happen
+    Laps(i32),                 // race ends after this many more laps
+    Time(Duration),            // race ends after this much more time
+    LapsOrTime(i32, Duration), // first of the above 2 to happen
 }
 
 pub struct StratRequest {
@@ -161,6 +165,8 @@ impl StratRequest {
                 fuel_to_save: self.fuel_save(&stints),
                 stops: self.stops(&stints),
                 stints: stints,
+                green: self.green,
+                yellow: self.yellow,
             }
         }
     }
@@ -170,13 +176,16 @@ impl StratRequest {
         let mut tm = Duration::ZERO;
         let mut laps = 0;
         let laps = yellow.chain(iter::repeat(self.green)).take_while(|lap| {
+            // for laps the race ends when Laps(l) are done
+            // for timed races, the race ends on the lap after time runs out
+            let res = match self.ends {
+                EndsWith::Laps(l) => laps < l,
+                EndsWith::Time(d) => tm <= d,
+                EndsWith::LapsOrTime(l, d) => laps < l && tm <= d,
+            };
             tm = tm.add(lap.time);
             laps += 1;
-            match self.ends {
-                EndsWith::Laps(l) => laps <= l,
-                EndsWith::Time(d) => tm <= d,
-                EndsWith::LapsOrTime(l, d) => laps <= l && tm <= d,
-            }
+            res
         });
         // the laps iterator will return the sequence of predicted laps until the conclusion of the race
 
@@ -270,6 +279,22 @@ mod tests {
     }
 
     #[test]
+    fn strat_timed_race() {
+        let d = Duration::new(25, 0);
+        let r = StratRequest {
+            fuel_left: 20.0,
+            tank_size: 20.0,
+            max_fuel_save: 0.0,
+            yellow_togo: 0,
+            ends: EndsWith::Time(Duration::new(105, 0)),
+            green: Rate { fuel: 0.5, time: d },
+            yellow: Rate { fuel: 0.1, time: d },
+        };
+        let s = r.compute();
+        assert_eq!(vec![5], s.laps());
+    }
+
+    #[test]
     fn strat_race_over() {
         let d = Duration::new(40, 0);
         let r = StratRequest {
@@ -316,11 +341,20 @@ mod tests {
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
-                time: Duration::new(60, 0),
+                time: Duration::new(55, 0),
             },
         };
+        // after lap 1 t=55     f=4.9
+        // after lap 2 t=110    f=4.8
+        // after lap 3 t=140    f=3.8
+        //           4 t=170    f=2.8
+        //           5 t=200    f=1.8
+        //           6 t=230    box f=10
+        //           7 t=260    f=9
+        //           8 t=290    f=8
+        //           9 t=320    f=7
         let s = r.compute();
-        assert_eq!(vec![6, 2], s.laps());
+        assert_eq!(vec![6, 3], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
 
@@ -336,11 +370,20 @@ mod tests {
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
-                time: Duration::new(60, 0),
+                time: Duration::new(55, 0),
             },
         };
+        // after lap 1 t=55     f=4.9
+        // after lap 2 t=110    f=4.8
+        // after lap 3 t=140    f=3.8
+        //           4 t=170    f=2.8
+        //           5 t=200    f=1.8
+        //           6 t=230    box f=10
+        //           7 t=260    f=9
+        //           8 t=290    f=8
+        //           9 t=320    f=7
         let s = r.compute();
-        assert_eq!(vec![6, 2], s.laps());
+        assert_eq!(vec![6, 3], s.laps());
         assert_eq!(vec![Pitstop::new(0, 6)], s.stops);
     }
 
