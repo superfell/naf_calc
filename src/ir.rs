@@ -1,13 +1,16 @@
 #![allow(dead_code)]
 
 extern crate encoding;
+extern crate num;
 
 use std::ffi::c_void;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use bitflags::bitflags;
+use num_derive::FromPrimitive;
 use std::ptr;
+use std::slice;
 use windows::Win32::System::Memory;
 use windows::Win32::System::Threading;
 use windows::Win32::System::Threading::WaitForSingleObject;
@@ -77,7 +80,32 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+impl FromValue for Flags {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        Ok(Self::from_bits_truncate(v as u32))
+    }
+}
+impl FromValue for TrackLocation {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidType),
+        }
+    }
+}
+impl FromValue for SessionState {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidType),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum TrackLocation {
     NotInWorld = -1,
     OffTrack,
@@ -121,7 +149,7 @@ pub enum TrackSurface {
     AstroturfMaterial,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum SessionState {
     Invalid,
     GetInCar,
@@ -221,6 +249,22 @@ pub enum VarType {
 
     //index, don't use
     ETCOUNT = 6,
+}
+
+#[derive(Debug)]
+pub enum Value<'a> {
+    Char(u8),
+    Chars(&'a [u8]),
+    Bool(bool),
+    Bools(&'a [bool]),
+    Int(i32),
+    Ints(&'a [i32]),
+    Bitfield(i32),
+    Bitfields(&'a [i32]),
+    Float(f32),
+    Floats(&'a [f32]),
+    Double(f64),
+    Doubles(&'a [f64]),
 }
 
 #[repr(C)]
@@ -446,35 +490,15 @@ impl Client {
                 for i in 0..(*h).num_vars {
                     let vh = vhbase.add(i as usize);
                     let var = Var { hdr: *vh };
-                    let fmt_val = if var.hdr.count > 1 {
-                        match var.var_type() {
-                            VarType::BOOL => format!("{:?}", self.bools(&var)),
-                            VarType::CHAR => format!("{:?}", self.chars(&var)),
-                            VarType::INT => format!("{:?}", self.ints(&var)),
-                            VarType::BITFIELD => format!("{:?}", self.bitfields(&var)),
-                            VarType::FLOAT => format!("{:?}", self.floats(&var)),
-                            VarType::DOUBLE => format!("{:?}", self.doubles(&var)),
-                            VarType::ETCOUNT => todo!(),
-                        }
-                    } else {
-                        match var.var_type() {
-                            VarType::BOOL => format!("{:?}", self.bool(&var)),
-                            VarType::CHAR => format!("{:?}", self.char(&var)),
-                            VarType::INT => format!("{:?}", self.int(&var)),
-                            VarType::BITFIELD => format!("{:?}", self.bitfield::<i32>(&var)),
-                            VarType::FLOAT => format!("{:?}", self.float(&var)),
-                            VarType::DOUBLE => format!("{:?}", self.double(&var)),
-                            VarType::ETCOUNT => todo!(),
-                        }
-                    };
+                    let value = self.var_value(&var);
                     println!(
-                        "{:20}: {:?}: {}: {}: {:?}\n{}",
+                        "{:40} {:32}: {:?}: {}: {}: {:?}",
+                        var.desc(),
                         var.name(),
                         var.var_type(),
                         var.count(),
                         var.hdr.count_as_time,
-                        fmt_val,
-                        var.desc(),
+                        value,
                     );
                 }
             },
@@ -498,62 +522,38 @@ impl Client {
             }
         }
     }
-    pub fn value<T: Copy>(&self, var: &Var, fortype: VarType) -> Option<T> {
-        if var.hdr.var_type == fortype {
-            unsafe {
-                let x = self.data.as_ptr().add(var.hdr.offset as usize);
-                let v = x as *const T;
-                Some(*v)
+    pub fn var_value(&self, var: &Var) -> Value {
+        unsafe {
+            let x = self.data.as_ptr().add(var.hdr.offset as usize);
+            if var.hdr.count == 1 {
+                match var.hdr.var_type {
+                    VarType::CHAR => Value::Char(*x),
+                    VarType::BOOL => Value::Bool(*(x as *const bool)),
+                    VarType::INT => Value::Int(*(x as *const i32)),
+                    VarType::BITFIELD => Value::Bitfield(*(x as *const i32)),
+                    VarType::FLOAT => Value::Float(*(x as *const f32)),
+                    VarType::DOUBLE => Value::Double(*(x as *const f64)),
+                    VarType::ETCOUNT => todo!(),
+                }
+            } else {
+                let l = var.count();
+                match var.hdr.var_type {
+                    VarType::CHAR => Value::Chars(slice::from_raw_parts(x, l)),
+                    VarType::BOOL => Value::Bools(slice::from_raw_parts(x as *const bool, l)),
+                    VarType::INT => Value::Ints(slice::from_raw_parts(x as *const i32, l)),
+                    VarType::BITFIELD => {
+                        Value::Bitfields(slice::from_raw_parts(x as *const i32, l))
+                    }
+                    VarType::FLOAT => Value::Floats(slice::from_raw_parts(x as *const f32, l)),
+                    VarType::DOUBLE => Value::Doubles(slice::from_raw_parts(x as *const f64, l)),
+                    VarType::ETCOUNT => todo!(),
+                }
             }
-        } else {
-            None
         }
     }
-    pub fn bool(&self, var: &Var) -> Option<bool> {
-        self.value(var, VarType::BOOL)
-    }
-    pub fn char(&self, var: &Var) -> Option<u8> {
-        self.value(var, VarType::CHAR)
-    }
-    pub fn int(&self, var: &Var) -> Option<i32> {
-        self.value(var, VarType::INT)
-    }
-    pub fn bitfield<T: Copy>(&self, var: &Var) -> Option<T> {
-        self.value(var, VarType::BITFIELD)
-    }
-    pub fn float(&self, var: &Var) -> Option<f32> {
-        self.value(var, VarType::FLOAT)
-    }
-    pub fn double(&self, var: &Var) -> Option<f64> {
-        self.value(var, VarType::DOUBLE)
-    }
-    fn values<T: Copy>(&self, var: &Var, fortype: VarType) -> &[T] {
-        if var.hdr.var_type == fortype {
-            unsafe {
-                let x = self.data.as_ptr().add(var.hdr.offset as usize) as *const T;
-                std::slice::from_raw_parts(x, var.count())
-            }
-        } else {
-            &[]
-        }
-    }
-    pub fn bools(&self, var: &Var) -> &[bool] {
-        self.values(var, VarType::BOOL)
-    }
-    pub fn chars(&self, var: &Var) -> &[u8] {
-        self.values(var, VarType::CHAR)
-    }
-    pub fn ints(&self, var: &Var) -> &[i32] {
-        self.values(var, VarType::INT)
-    }
-    pub fn bitfields(&self, var: &Var) -> &[i32] {
-        self.values(var, VarType::BITFIELD)
-    }
-    pub fn floats(&self, var: &Var) -> &[f32] {
-        self.values(var, VarType::FLOAT)
-    }
-    pub fn doubles(&self, var: &Var) -> &[f64] {
-        self.values(var, VarType::DOUBLE)
+    pub fn value<T: FromValue>(&self, var: &Var) -> Result<T, Error> {
+        let v = self.var_value(var);
+        T::var_result(v)
     }
     pub fn session_info_update(&self) -> Option<i32> {
         unsafe { self.header.map(|h| (*h).session_info_update) }
@@ -575,5 +575,75 @@ impl Client {
                 WINDOWS_1252.decode(bytes, DecoderTrap::Replace)
             },
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    InvalidType,
+}
+
+impl<'a> Value<'a> {
+    fn as_f64(&self) -> Result<f64, Error> {
+        match *self {
+            Value::Double(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    fn as_f32(&self) -> Result<f32, Error> {
+        match *self {
+            Value::Float(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    fn as_i32(&self) -> Result<i32, Error> {
+        match *self {
+            Value::Int(f) => Ok(f),
+            Value::Bitfield(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    fn as_bool(&self) -> Result<bool, Error> {
+        match *self {
+            Value::Bool(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    fn as_u8(&self) -> Result<u8, Error> {
+        match *self {
+            Value::Char(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+}
+
+pub trait FromValue: Sized {
+    /// Converts iracing Value into Rust value.
+    fn var_result(value: Value) -> Result<Self, Error>;
+}
+
+impl FromValue for bool {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        value.as_bool()
+    }
+}
+impl FromValue for u8 {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        value.as_u8()
+    }
+}
+impl FromValue for i32 {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        value.as_i32()
+    }
+}
+impl FromValue for f32 {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        value.as_f32()
+    }
+}
+impl FromValue for f64 {
+    fn var_result(value: Value) -> Result<Self, Error> {
+        value.as_f64()
     }
 }
