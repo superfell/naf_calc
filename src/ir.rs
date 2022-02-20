@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+extern crate encoding;
+
 use std::ffi::c_void;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -9,6 +11,9 @@ use std::ptr;
 use windows::Win32::System::Memory;
 use windows::Win32::System::Threading;
 use windows::Win32::System::Threading::WaitForSingleObject;
+
+use encoding::all::WINDOWS_1252;
+use encoding::{DecoderTrap, Encoding};
 
 const IRSDK_MAX_BUFS: usize = 4;
 const IRSDK_MAX_STRING: usize = 32;
@@ -550,20 +555,24 @@ impl Client {
     pub fn doubles(&self, var: &Var) -> &[f64] {
         self.values(var, VarType::DOUBLE)
     }
-    pub fn session_info_update(&self) -> i32 {
-        unsafe {
-            match self.header {
-                None => -1,
-                Some(h) => (*h).session_info_update,
-            }
-        }
+    pub fn session_info_update(&self) -> Option<i32> {
+        unsafe { self.header.map(|h| (*h).session_info_update) }
     }
-    pub fn session_info(&self) -> &str {
+    pub fn session_info(&self) -> Result<String, std::borrow::Cow<str>> {
         match self.header {
-            None => "",
+            None => Ok("".to_string()),
             Some(h) => unsafe {
-                let p = self.shared_mem.add((*h).session_info_offset as usize);
-                CStr::from_ptr(p as *const c_char).to_str().unwrap()
+                let p = self.shared_mem.add((*h).session_info_offset as usize) as *mut u8;
+                let mut bytes = std::slice::from_raw_parts(p, (*h).session_info_len as usize);
+                // session_info_len is the size of the buffer, not necessarily the size of the string
+                // so we have to look for the null terminatior.
+                for i in 0..bytes.len() {
+                    if bytes[i] == 0 {
+                        bytes = &bytes[0..i];
+                        break;
+                    }
+                }
+                WINDOWS_1252.decode(bytes, DecoderTrap::Replace)
             },
         }
     }
