@@ -27,6 +27,17 @@ const IRSDK_MAX_DESC: usize = 64;
 pub const IRSDK_UNLIMITED_LAPS: i32 = 32767;
 pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
 
+#[derive(Debug)]
+pub enum Error {
+    InvalidType,
+    InvalidEnumValue,
+}
+
+pub trait FromValue: Sized {
+    /// Converts an iracing Value into Rust value.
+    fn var_result(value: &Value) -> Result<Self, Error>;
+}
+
 bitflags! {
     pub struct StatusField:i32 {
         const CONNECTED = 1;
@@ -42,6 +53,12 @@ bitflags! {
         const PIT_SPEED_LIMITER     = 0x10;
         const REV_LIMITER_ACTIVE    = 0x20;
         const OIL_TEMP_WARNING      = 0x40;
+    }
+}
+impl FromValue for EngineWarnings {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        Ok(Self::from_bits_truncate(v))
     }
 }
 
@@ -79,29 +96,10 @@ bitflags! {
         const START_GO      = 0x80000000;
     }
 }
-
 impl FromValue for Flags {
-    fn var_result(value: Value) -> Result<Self, Error> {
+    fn var_result(value: &Value) -> Result<Self, Error> {
         let v = value.as_i32()?;
         Ok(Self::from_bits_truncate(v as u32))
-    }
-}
-impl FromValue for TrackLocation {
-    fn var_result(value: Value) -> Result<Self, Error> {
-        let v = value.as_i32()?;
-        match num::FromPrimitive::from_i32(v) {
-            Some(t) => Ok(t),
-            None => Err(Error::InvalidType),
-        }
-    }
-}
-impl FromValue for SessionState {
-    fn var_result(value: Value) -> Result<Self, Error> {
-        let v = value.as_i32()?;
-        match num::FromPrimitive::from_i32(v) {
-            Some(t) => Ok(t),
-            None => Err(Error::InvalidType),
-        }
     }
 }
 
@@ -113,8 +111,17 @@ pub enum TrackLocation {
     ApproachingPits,
     OnTrack,
 }
+impl FromValue for TrackLocation {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidEnumValue),
+        }
+    }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum TrackSurface {
     SurfaceNotInWorld = -1,
     UndefinedMaterial = 0,
@@ -148,6 +155,15 @@ pub enum TrackSurface {
     GrasscreteMaterial,
     AstroturfMaterial,
 }
+impl FromValue for TrackSurface {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidEnumValue),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum SessionState {
@@ -159,8 +175,17 @@ pub enum SessionState {
     Checkered,
     CoolDown,
 }
+impl FromValue for SessionState {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidEnumValue),
+        }
+    }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum CarLeftRight {
     LROff,
     LRClear,        // no cars around us.
@@ -169,6 +194,15 @@ pub enum CarLeftRight {
     LRCarLeftRight, // there are cars on each side.
     LR2CarsLeft,    // there are two cars to our left.
     LR2CarsRight,   // there are two cars to our right.
+}
+impl FromValue for CarLeftRight {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidEnumValue),
+        }
+    }
 }
 
 bitflags! {
@@ -186,6 +220,12 @@ bitflags! {
         const USE_MOUSE_AIM_MODE        = 0x0100;
     }
 }
+impl FromValue for CameraState {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        Ok(Self::from_bits_truncate(v))
+    }
+}
 
 bitflags! {
     pub struct PitSvcFlags:i32 {
@@ -199,8 +239,14 @@ bitflags! {
         const FAST_REPAIR		= 0x0040;
     }
 }
+impl FromValue for PitSvcFlags {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        Ok(Self::from_bits_truncate(v))
+    }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum PitSvcStatus {
     // status
     PitSvNone = 0,
@@ -215,8 +261,17 @@ pub enum PitSvcStatus {
     PitSvBadAngle,
     PitSvCantFixThat,
 }
+impl FromValue for PitSvcStatus {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidEnumValue),
+        }
+    }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum PaceMode {
     PaceModeSingleFileStart = 0,
     PaceModeDoubleFileStart,
@@ -224,12 +279,27 @@ pub enum PaceMode {
     PaceModeDoubleFileRestart,
     PaceModeNotPacing,
 }
+impl FromValue for PaceMode {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        match num::FromPrimitive::from_i32(v) {
+            Some(t) => Ok(t),
+            None => Err(Error::InvalidEnumValue),
+        }
+    }
+}
 
 bitflags! {
     pub struct PaceFlags:i32 {
         const END_OF_LINE   = 0x01;
         const FREE_PASS     = 0x02;
         const WAVED_AROUND  = 0x04;
+    }
+}
+impl FromValue for PaceFlags {
+    fn var_result(value: &Value) -> Result<Self, Error> {
+        let v = value.as_i32()?;
+        Ok(Self::from_bits_truncate(v))
     }
 }
 
@@ -251,7 +321,7 @@ pub enum VarType {
     ETCOUNT = 6,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value<'a> {
     Char(u8),
     Chars(&'a [u8]),
@@ -553,14 +623,14 @@ impl Client {
     }
     pub fn value<T: FromValue>(&self, var: &Var) -> Result<T, Error> {
         let v = self.var_value(var);
-        T::var_result(v)
+        T::var_result(&v)
     }
     pub fn session_info_update(&self) -> Option<i32> {
         unsafe { self.header.map(|h| (*h).session_info_update) }
     }
     pub fn session_info(&self) -> Result<String, std::borrow::Cow<str>> {
         match self.header {
-            None => Ok("".to_string()),
+            None => Err(std::borrow::Cow::from("not connected")),
             Some(h) => unsafe {
                 let p = self.shared_mem.add((*h).session_info_offset as usize) as *mut u8;
                 let mut bytes = std::slice::from_raw_parts(p, (*h).session_info_len as usize);
@@ -578,72 +648,92 @@ impl Client {
     }
 }
 
-#[derive(Debug)]
-pub enum Error {
-    InvalidType,
-}
-
 impl<'a> Value<'a> {
-    fn as_f64(&self) -> Result<f64, Error> {
+    pub fn as_f64(&self) -> Result<f64, Error> {
         match *self {
             Value::Double(f) => Ok(f),
             _ => Err(Error::InvalidType),
         }
     }
-    fn as_f32(&self) -> Result<f32, Error> {
+    pub fn as_f32(&self) -> Result<f32, Error> {
         match *self {
             Value::Float(f) => Ok(f),
             _ => Err(Error::InvalidType),
         }
     }
-    fn as_i32(&self) -> Result<i32, Error> {
+    pub fn as_i32(&self) -> Result<i32, Error> {
         match *self {
             Value::Int(f) => Ok(f),
             Value::Bitfield(f) => Ok(f),
             _ => Err(Error::InvalidType),
         }
     }
-    fn as_bool(&self) -> Result<bool, Error> {
+    pub fn as_bool(&self) -> Result<bool, Error> {
         match *self {
             Value::Bool(f) => Ok(f),
             _ => Err(Error::InvalidType),
         }
     }
-    fn as_u8(&self) -> Result<u8, Error> {
+    pub fn as_u8(&self) -> Result<u8, Error> {
         match *self {
             Value::Char(f) => Ok(f),
             _ => Err(Error::InvalidType),
         }
     }
-}
-
-pub trait FromValue: Sized {
-    /// Converts iracing Value into Rust value.
-    fn var_result(value: Value) -> Result<Self, Error>;
+    pub fn as_f64s(&self) -> Result<&[f64], Error> {
+        match *self {
+            Value::Doubles(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    pub fn as_f32s(&self) -> Result<&[f32], Error> {
+        match *self {
+            Value::Floats(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    pub fn as_i32s(&self) -> Result<&[i32], Error> {
+        match *self {
+            Value::Ints(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    pub fn as_bools(&self) -> Result<&[bool], Error> {
+        match *self {
+            Value::Bools(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
+    pub fn as_u8s(&self) -> Result<&[u8], Error> {
+        match *self {
+            Value::Chars(f) => Ok(f),
+            _ => Err(Error::InvalidType),
+        }
+    }
 }
 
 impl FromValue for bool {
-    fn var_result(value: Value) -> Result<Self, Error> {
+    fn var_result(value: &Value) -> Result<Self, Error> {
         value.as_bool()
     }
 }
 impl FromValue for u8 {
-    fn var_result(value: Value) -> Result<Self, Error> {
+    fn var_result(value: &Value) -> Result<Self, Error> {
         value.as_u8()
     }
 }
 impl FromValue for i32 {
-    fn var_result(value: Value) -> Result<Self, Error> {
+    fn var_result(value: &Value) -> Result<Self, Error> {
         value.as_i32()
     }
 }
 impl FromValue for f32 {
-    fn var_result(value: Value) -> Result<Self, Error> {
+    fn var_result(value: &Value) -> Result<Self, Error> {
         value.as_f32()
     }
 }
 impl FromValue for f64 {
-    fn var_result(value: Value) -> Result<Self, Error> {
+    fn var_result(value: &Value) -> Result<Self, Error> {
         value.as_f64()
     }
 }
