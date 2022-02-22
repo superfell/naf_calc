@@ -80,10 +80,7 @@ fn build_root_widget() -> impl Widget<State> {
                     .with_spacer(R0_HEIGHT)
                     .with_child(lbl("Car", UnitPoint::LEFT, C0_WIDTH, R_HEIGHT))
                     .with_child(lbl("Race", UnitPoint::LEFT, C0_WIDTH, R_HEIGHT))
-                    .with_child(
-                        lbl("Last Lap", UnitPoint::LEFT, C0_WIDTH, R_HEIGHT)
-                            .background(Color::BLUE),
-                    )
+                    .with_child(lbl("Last Lap", UnitPoint::LEFT, C0_WIDTH, R_HEIGHT))
                     .with_child(lbl("Average", UnitPoint::LEFT, C0_WIDTH, R_HEIGHT))
                     .with_child(lbl("Pit", UnitPoint::LEFT, C0_WIDTH, R_HEIGHT)),
             )
@@ -96,7 +93,7 @@ fn build_root_widget() -> impl Widget<State> {
                             .env_scope(|env, data| {
                                 env.set(
                                     COLOR_KEY,
-                                    if *data < 0.0 {
+                                    if *data < 1.0 {
                                         Color::RED
                                     } else {
                                         Color::GREEN
@@ -117,9 +114,7 @@ fn build_root_widget() -> impl Widget<State> {
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32).lens(State::fuel_avg),
                     )
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_ps)
-                            .background(Color::GRAY)
-                            .lens(State::next_stop),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_ps).lens(State::next_stop),
                     )
                     .expand_width(),
                 1.0,
@@ -135,9 +130,7 @@ fn build_root_widget() -> impl Widget<State> {
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_i32)
                             .lens(State::race.then(AmountLeft::laps)),
                     )
-                    .with_child(
-                        lbl("Save", UnitPoint::RIGHT, C_WIDTH, R_HEIGHT).background(Color::GRAY),
-                    )
+                    .with_child(lbl("Save", UnitPoint::RIGHT, C_WIDTH, R_HEIGHT))
                     .with_spacer(R_HEIGHT)
                     .with_child(lbl("Stops", UnitPoint::RIGHT, C_WIDTH, R_HEIGHT)),
                 1.0,
