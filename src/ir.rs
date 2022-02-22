@@ -3,6 +3,7 @@
 extern crate encoding;
 extern crate num;
 
+use core::fmt;
 use std::ffi::c_void;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -398,7 +399,7 @@ impl IrsdkVarHeader {
         }
         let b = n.as_bytes();
         for (i, item) in b.iter().enumerate() {
-            if *item != b[i] {
+            if *item != self.name[i] {
                 return false;
             }
         }
@@ -411,7 +412,6 @@ impl IrsdkVarHeader {
     }
 }
 
-#[derive(Debug)]
 pub struct Var {
     hdr: IrsdkVarHeader,
 }
@@ -433,7 +433,11 @@ impl Var {
         self.hdr.count as usize
     }
 }
-
+impl fmt::Debug for Var {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({}) {:?}", self.name(), self.desc(), self.var_type())
+    }
+}
 pub struct Client {
     file_mapping: windows::Win32::Foundation::HANDLE,
     shared_mem: *mut c_void,
