@@ -163,22 +163,6 @@ fn build_root_widget() -> impl Widget<State> {
                 1.0,
             ),
     }
-    // // a label that will determine its text based on the current app data.
-    // let label = Label::new(|data: &HelloState, _env: &Env| format!("Hello {}!", data.name));
-    // // a textbox that modifies `name`.
-    // let textbox = TextBox::new()
-    //     .with_placeholder("Who are we greeting?")
-    //     .fix_width(TEXT_BOX_WIDTH)
-    //     .lens(HelloState::name);
-
-    // // arrange the two widgets vertically, with some padding
-    // let layout = Flex::column()
-    //     .with_child(label)
-    //     .with_spacer(VERTICAL_WIDGET_SPACING)
-    //     .with_child(textbox);
-
-    // // center the two widgets in the available space
-    // Align::centered(layout)
 }
 
 struct TimerWidget<T, F: FnMut(&mut T)> {

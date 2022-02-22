@@ -21,7 +21,12 @@ impl Data for ADuration {
 }
 impl fmt::Display for ADuration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:2}:{:2}", self.d.as_secs() / 60, self.d.as_secs() % 60)
+        write!(
+            f,
+            "{:02}:{:02}",
+            self.d.as_secs() / 60,
+            self.d.as_secs() % 60
+        )
     }
 }
 
@@ -42,15 +47,14 @@ impl Default for AmountLeft {
 }
 #[derive(Clone, Data, Lens)]
 pub struct State {
-    pub connected: bool,    // connected to iracing
-    pub car: AmountLeft,    // what's left in the car
-    pub race: AmountLeft,   // what's left to go in the race
-    pub fuel_last_lap: f32, // fuel used on the last lap
-    pub fuel_avg: f32,      // average per lap usage (green flag only)
-    pub stops: i32,         // pitstops needed to finish race
-    #[data(same_fn = "PartialEq::eq")]
+    pub connected: bool,            // connected to iracing
+    pub car: AmountLeft,            // what's left in the car
+    pub race: AmountLeft,           // what's left to go in the race
+    pub fuel_last_lap: f32,         // fuel used on the last lap
+    pub fuel_avg: f32,              // average per lap usage (green flag only)
+    pub stops: i32,                 // pitstops needed to finish race
     pub next_stop: Option<Pitstop>, // details on the next pitstop
-    pub save: f32,          // save this much fuel to skip the last pitstop
+    pub save: f32,                  // save this much fuel to skip the last pitstop
 }
 impl Default for State {
     fn default() -> Self {
@@ -152,8 +156,7 @@ impl IrCalc {
                 // reset lap start when the parade lap starts.
                 cs.lap_start = this;
                 // show the stratagy if there's one available
-                let s = cs.calc.strat(this.ends());
-                if let Some(x) = s {
+                if let Some(x) = cs.calc.strat(this.ends()) {
                     Self::strat_to_result(&x, result);
                 }
             }
@@ -171,8 +174,7 @@ impl IrCalc {
                     && this.session_state != ir::SessionState::CoolDown
                 {
                     cs.calc.add_lap(new_lap);
-                    let ends = this.ends();
-                    match cs.calc.strat(ends) {
+                    match cs.calc.strat(this.ends()) {
                         Some(strat) => Self::strat_to_result(&strat, result),
                         None => {}
                     }
@@ -184,10 +186,12 @@ impl IrCalc {
             result.car.fuel = this.fuel_level;
             // update race time/laps left from source, not strat
             let tick = this.session_time - cs.last.session_time;
+            let dtick = Duration::from_millis((tick * 1000.0) as u64);
+            result.car.time.d -= dtick;
             match this.ends() {
                 EndsWith::Laps(l) => {
                     result.race.laps = l;
-                    result.race.time.d -= Duration::from_millis((tick * 1000.0) as u64);
+                    result.race.time.d -= dtick;
                 }
                 EndsWith::Time(d) => {
                     result.race.time.d = d;
@@ -214,125 +218,6 @@ impl IrCalc {
         result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
         result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
         result.race.time.d = strat.stints.iter().map(|s| s.time).sum();
-    }
-}
-fn iracing_main() {
-    let mut c = ir::Client::new();
-    'main: loop {
-        loop {
-            // wait for iRacing
-            let ready = c.wait_for_data(std::time::Duration::new(1, 0));
-            if ready && c.connected() {
-                break;
-            }
-        }
-        println!("connected to iracing!");
-        let session_info = match c.session_info() {
-            Ok(s) => SessionInfo::parse(&s, 0),
-            Err(e) => panic!("failed to decode session string {}", e),
-        };
-        println!("session_info {:?}", session_info);
-        let cfg = RaceConfig {
-            fuel_tank_size: (session_info.driver_car_fuel_max_ltr
-                * session_info.driver_car_max_fuel_pct) as f32,
-            max_fuel_save: 0.1,
-            track_id: session_info.track_id,
-            track_name: session_info.track_display_name,
-            layout_name: session_info.track_config_name,
-            car_id: session_info.car_id,
-            db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
-        };
-        println!("calculator config: {:?}", cfg);
-        let mut calc = Calculator::new(cfg).unwrap();
-
-        'session: loop {
-            println!(
-                "new session: session_info_update {}",
-                c.session_info_update().unwrap()
-            );
-            let f = CarStateFactory::new(&c);
-            let mut last = f.read(&c);
-            let session_info = match c.session_info() {
-                Ok(s) => SessionInfo::parse(&s, last.session_num),
-                Err(e) => panic!("failed to decode session string {}", e),
-            };
-            println!("session info {:?}", session_info);
-            let mut lap_start = last;
-            let calc_interval = std::time::Duration::new(0, 16 * 1000 * 1000);
-            loop {
-                if c.wait_for_data(calc_interval) {
-                    let this = f.read(&c);
-                    if this.session_time < last.session_time {
-                        // reset
-                        calc.save_laps().unwrap(); //TODO
-                        continue 'session;
-                    }
-                    if (!lap_start.is_on_track) && this.is_on_track {
-                        lap_start = this;
-                    }
-                    if last.player_track_surface == ir::TrackLocation::InPitStall
-                        && this.player_track_surface != last.player_track_surface
-                    {
-                        // reset lap start when we leave the pit box
-                        lap_start = this;
-                    }
-                    if this.session_state == ir::SessionState::ParadeLaps
-                        && last.session_state != this.session_state
-                    {
-                        // reset lap start when the parade lap starts.
-                        lap_start = this;
-                        // show the stratagy if there's one available
-                        let s = calc.strat(this.ends());
-                        if let Some(x) = s {
-                            println!("Starting strat {:?} {:?}", x.laps(), x.stops);
-                        }
-                    }
-                    if this.lap_progress < 0.1 && last.lap_progress > 0.9 {
-                        let new_lap = Lap {
-                            fuel_left: this.fuel_level,
-                            fuel_used: lap_start.fuel_level - this.fuel_level,
-                            // TODO, this is not interopolating the lap
-                            time: Duration::from_millis(
-                                ((this.session_time - lap_start.session_time) * 1000.0) as u64,
-                            ),
-                            condition: this.lap_state() | lap_start.lap_state(),
-                        };
-                        println!("\n\t{}\n\t{}", lap_start, this);
-                        println!("lap {:?}", new_lap);
-                        if this.session_state != ir::SessionState::Checkered
-                            && this.session_state != ir::SessionState::CoolDown
-                        {
-                            calc.add_lap(new_lap);
-                            let ends = this.ends();
-                            println!("ends: {:?}", ends);
-                            match calc.strat(ends) {
-                                Some(strat) => {
-                                    println!(
-                                        "stints: {:?} stops:{:?} save:{}",
-                                        strat.laps(),
-                                        strat.stops,
-                                        strat.fuel_to_save,
-                                    );
-                                }
-                                None => {}
-                            }
-                        }
-                        lap_start = this;
-                    }
-                    if this.session_flags != last.session_flags
-                        || this.session_state != last.session_state
-                        || this.player_track_surface != last.player_track_surface
-                    {
-                        println!("{}", this);
-                    }
-                    last = this;
-                } else if !c.connected() {
-                    println!("no longer connected to iracing");
-                    calc.save_laps().unwrap();
-                    continue 'main;
-                }
-            }
-        }
     }
 }
 
@@ -505,7 +390,6 @@ struct SessionInfo {
 impl SessionInfo {
     fn parse(session_info: &str, session_num: i32) -> SessionInfo {
         let yamls = yaml_rust::YamlLoader::load_from_str(session_info).unwrap();
-        println!("session_info\n{}", session_info);
         let si = &yamls[0];
         let di = &si["DriverInfo"];
         let wi = &si["WeekendInfo"];
