@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use bitflags::bitflags;
+use druid::Data;
 use math::round;
 use std::cmp;
 use std::fmt;
@@ -48,7 +49,7 @@ impl Rate {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Data)]
 pub struct Pitstop {
     pub open: i32,
     pub close: i32,
@@ -56,6 +57,9 @@ pub struct Pitstop {
 impl Pitstop {
     pub fn new(open: i32, close: i32) -> Pitstop {
         Pitstop { open, close }
+    }
+    pub fn is_open(&self) -> bool {
+        return self.open <= 0;
     }
 }
 impl fmt::Display for Pitstop {
