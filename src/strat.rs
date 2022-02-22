@@ -59,7 +59,7 @@ impl Pitstop {
         Pitstop { open, close }
     }
     pub fn is_open(&self) -> bool {
-        return self.open <= 0;
+        self.open <= 0
     }
 }
 impl fmt::Display for Pitstop {
@@ -167,7 +167,7 @@ impl StratRequest {
             Some(Strategy {
                 fuel_to_save: self.fuel_save(&stints),
                 stops: self.stops(&stints),
-                stints: stints,
+                stints,
                 green: self.green,
                 yellow: self.yellow,
             })
@@ -210,24 +210,24 @@ impl StratRequest {
         stints
     }
 
-    fn stops(&self, stints: &Vec<Stint>) -> Vec<Pitstop> {
+    fn stops(&self, stints: &[Stint]) -> Vec<Pitstop> {
         let mut stops = Vec::with_capacity(stints.len());
         let full_stint_len = round::floor((self.tank_size / self.green.fuel) as f64, 0) as i32;
         let mut lap_open = 0;
         let mut lap_close = 0;
         let mut ext = full_stint_len - stints.last().unwrap().laps;
-        for i in 0..stints.len() - 1 {
+        for stint in stints.iter().take(stints.len() - 1) {
             // we can bring this stop forward by extending a later stop
-            let wdw_size = cmp::min(ext, stints[i].laps);
-            lap_open += stints[i].laps - wdw_size;
-            lap_close += stints[i].laps;
+            let wdw_size = cmp::min(ext, stint.laps);
+            lap_open += stint.laps - wdw_size;
+            lap_close += stint.laps;
             stops.push(Pitstop::new(lap_open, lap_close));
             ext -= wdw_size;
         }
         stops
     }
 
-    fn fuel_save(&self, stints: &Vec<Stint>) -> f32 {
+    fn fuel_save(&self, stints: &[Stint]) -> f32 {
         let total: f32 = stints.iter().map(|s| s.fuel).sum();
         let max_save = total * self.max_fuel_save;
         let last_stint_fuel = stints.last().unwrap().fuel;

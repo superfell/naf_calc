@@ -174,9 +174,8 @@ impl IrCalc {
                     && this.session_state != ir::SessionState::CoolDown
                 {
                     cs.calc.add_lap(new_lap);
-                    match cs.calc.strat(this.ends()) {
-                        Some(strat) => Self::strat_to_result(&strat, result),
-                        None => {}
+                    if let Some(strat) = cs.calc.strat(this.ends()) {
+                        Self::strat_to_result(&strat, result)
                     }
                 }
                 result.fuel_last_lap = new_lap.fuel_used;
@@ -268,20 +267,20 @@ impl CarState {
                 | ir::Flags::CAUTION_WAVING
                 | ir::Flags::CAUTION,
         ) {
-            s = s | LapState::YELLOW
+            s |= LapState::YELLOW
         }
         if self.player_track_surface == ir::TrackLocation::ApproachingPits
             || self.player_track_surface == ir::TrackLocation::InPitStall
         {
-            s = s | LapState::PITTED
+            s |= LapState::PITTED
         }
         if self.session_state == ir::SessionState::ParadeLaps
             || self.session_state == ir::SessionState::Warmup
         {
-            s = s | LapState::PACE_LAP
+            s |= LapState::PACE_LAP
         }
         if f.intersects(ir::Flags::ONE_TO_GREEN) && s.intersects(LapState::YELLOW) {
-            s = s | LapState::ONE_TO_GREEN
+            s |= LapState::ONE_TO_GREEN
         }
         s
     }

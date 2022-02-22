@@ -185,15 +185,16 @@ impl FromValue for SessionState {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum CarLeftRight {
-    LROff,
-    LRClear,        // no cars around us.
-    LRCarLeft,      // there is a car to our left.
-    LRCarRight,     // there is a car to our right.
-    LRCarLeftRight, // there are cars on each side.
-    LR2CarsLeft,    // there are two cars to our left.
-    LR2CarsRight,   // there are two cars to our right.
+    Off,
+    Clear,        // no cars around us.
+    CarLeft,      // there is a car to our left.
+    CarRight,     // there is a car to our right.
+    CarLeftRight, // there are cars on each side.
+    TwoCarsLeft,  // there are two cars to our left.
+    TwoCarsRight, // there are two cars to our right.
 }
 impl FromValue for CarLeftRight {
     fn var_result(value: &Value) -> Result<Self, Error> {
@@ -249,17 +250,17 @@ impl FromValue for PitSvcFlags {
 #[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum PitSvcStatus {
     // status
-    PitSvNone = 0,
-    PitSvInProgress,
-    PitSvComplete,
+    None = 0,
+    InProgress,
+    Complete,
 
     // errors
-    PitSvTooFarLeft = 100,
-    PitSvTooFarRight,
-    PitSvTooFarForward,
-    PitSvTooFarBack,
-    PitSvBadAngle,
-    PitSvCantFixThat,
+    TooFarLeft = 100,
+    TooFarRight,
+    TooFarForward,
+    TooFarBack,
+    BadAngle,
+    CantFixThat,
 }
 impl FromValue for PitSvcStatus {
     fn var_result(value: &Value) -> Result<Self, Error> {
@@ -273,11 +274,11 @@ impl FromValue for PitSvcStatus {
 
 #[derive(Clone, Copy, Debug, PartialEq, FromPrimitive)]
 pub enum PaceMode {
-    PaceModeSingleFileStart = 0,
-    PaceModeDoubleFileStart,
-    PaceModeSingleFileRestart,
-    PaceModeDoubleFileRestart,
-    PaceModeNotPacing,
+    SingleFileStart = 0,
+    DoubleFileStart,
+    SingleFileRestart,
+    DoubleFileRestart,
+    NotPacing,
 }
 impl FromValue for PaceMode {
     fn var_result(value: &Value) -> Result<Self, Error> {
@@ -306,19 +307,20 @@ impl FromValue for PaceFlags {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VarType {
     // 1 byte
-    CHAR = 0,
-    BOOL = 1,
+    Char = 0,
+    Bool = 1,
 
     // 4 bytes
-    INT = 2,
-    BITFIELD = 3,
-    FLOAT = 4,
+    Int = 2,
+    Bitfield = 3,
+    Float = 4,
 
     // 8 bytes
-    DOUBLE = 5,
+    Double = 5,
 
     //index, don't use
-    ETCOUNT = 6,
+    #[deprecated]
+    Etcount = 6,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -395,8 +397,8 @@ impl IrsdkVarHeader {
             return false;
         }
         let b = n.as_bytes();
-        for i in 0..b.len() {
-            if self.name[i] != b[i] {
+        for (i, item) in b.iter().enumerate() {
+            if *item != b[i] {
                 return false;
             }
         }
@@ -416,7 +418,7 @@ pub struct Var {
 #[allow(dead_code)]
 impl Var {
     pub fn var_type(&self) -> VarType {
-        return self.hdr.var_type;
+        self.hdr.var_type
     }
     pub fn name(&self) -> &str {
         self.hdr.name().unwrap()
@@ -445,14 +447,14 @@ pub struct Client {
 #[allow(dead_code)]
 impl Client {
     pub fn new() -> Self {
-        return Client {
+        Client {
             file_mapping: windows::Win32::Foundation::INVALID_HANDLE_VALUE,
             shared_mem: std::ptr::null_mut(),
             header: None,
             new_data: windows::Win32::Foundation::INVALID_HANDLE_VALUE,
             last_tick_count: 0,
             data: bytes::BytesMut::with_capacity(1024),
-        };
+        }
     }
     pub fn startup(&mut self) -> bool {
         if self.file_mapping.is_invalid() {
@@ -477,9 +479,7 @@ impl Client {
                 }
             }
         }
-        return !self.file_mapping.is_invalid()
-            && !self.shared_mem.is_null()
-            && !self.new_data.is_invalid();
+        !self.file_mapping.is_invalid() && !self.shared_mem.is_null() && !self.new_data.is_invalid()
     }
     pub fn close(&mut self) {
         unsafe {
@@ -549,7 +549,7 @@ impl Client {
                 }
             }
         }
-        return false;
+        false
     }
     pub fn dump_vars(&self) {
         match self.header {
@@ -597,26 +597,26 @@ impl Client {
             let x = self.data.as_ptr().add(var.hdr.offset as usize);
             if var.hdr.count == 1 {
                 match var.hdr.var_type {
-                    VarType::CHAR => Value::Char(*x),
-                    VarType::BOOL => Value::Bool(*(x as *const bool)),
-                    VarType::INT => Value::Int(*(x as *const i32)),
-                    VarType::BITFIELD => Value::Bitfield(*(x as *const i32)),
-                    VarType::FLOAT => Value::Float(*(x as *const f32)),
-                    VarType::DOUBLE => Value::Double(*(x as *const f64)),
-                    VarType::ETCOUNT => todo!(),
+                    VarType::Char => Value::Char(*x),
+                    VarType::Bool => Value::Bool(*(x as *const bool)),
+                    VarType::Int => Value::Int(*(x as *const i32)),
+                    VarType::Bitfield => Value::Bitfield(*(x as *const i32)),
+                    VarType::Float => Value::Float(*(x as *const f32)),
+                    VarType::Double => Value::Double(*(x as *const f64)),
+                    _ => todo!(), // ETCount
                 }
             } else {
                 let l = var.count();
                 match var.hdr.var_type {
-                    VarType::CHAR => Value::Chars(slice::from_raw_parts(x, l)),
-                    VarType::BOOL => Value::Bools(slice::from_raw_parts(x as *const bool, l)),
-                    VarType::INT => Value::Ints(slice::from_raw_parts(x as *const i32, l)),
-                    VarType::BITFIELD => {
+                    VarType::Char => Value::Chars(slice::from_raw_parts(x, l)),
+                    VarType::Bool => Value::Bools(slice::from_raw_parts(x as *const bool, l)),
+                    VarType::Int => Value::Ints(slice::from_raw_parts(x as *const i32, l)),
+                    VarType::Bitfield => {
                         Value::Bitfields(slice::from_raw_parts(x as *const i32, l))
                     }
-                    VarType::FLOAT => Value::Floats(slice::from_raw_parts(x as *const f32, l)),
-                    VarType::DOUBLE => Value::Doubles(slice::from_raw_parts(x as *const f64, l)),
-                    VarType::ETCOUNT => todo!(),
+                    VarType::Float => Value::Floats(slice::from_raw_parts(x as *const f32, l)),
+                    VarType::Double => Value::Doubles(slice::from_raw_parts(x as *const f64, l)),
+                    _ => todo!(), // ETCount
                 }
             }
         }

@@ -39,7 +39,7 @@ impl Calculator {
                 con.map(|con| {
                     Some(Db {
                         con_mgr: c,
-                        con: con,
+                        con,
                         laps_written: 0,
                         id: None,
                     })
@@ -47,9 +47,9 @@ impl Calculator {
             }
         }?;
         let mut c = Calculator {
-            cfg: cfg,
+            cfg,
             laps: Vec::with_capacity(16),
-            db: db,
+            db,
         };
         c.init_schema()?;
         c.insert_session().expect("failed to insert session");
@@ -88,7 +88,7 @@ impl Calculator {
                 if !yellow_start {
                     yellow_start = true;
                 } else {
-                    total = total.add(&lap);
+                    total = total.add(lap);
                     count += 1;
                 }
             } else {
@@ -106,13 +106,10 @@ impl Calculator {
     }
 
     pub fn strat(&self, ends: EndsWith) -> Option<Strategy> {
-        let green = self.recent_green();
-        if green.is_none() {
-            return None;
-        }
+        let green = self.recent_green()?;
         let yellow = self.recent_yellow().unwrap_or_else(|| Rate {
-            fuel: green.unwrap().fuel / 4.0,
-            time: green.unwrap().time * 4,
+            fuel: green.fuel / 4.0,
+            time: green.time * 4,
         });
         // currently the or to default to a full tank is never triggered because recent_green() will
         // return None if we haven't done any laps yet. [this will change in the future]
@@ -128,7 +125,7 @@ impl Calculator {
             .take_while(|lap| lap.condition.intersects(LapState::YELLOW))
             .count() as isize;
         let r = StratRequest {
-            fuel_left: fuel_left,
+            fuel_left,
             tank_size: self.cfg.fuel_tank_size,
             max_fuel_save: self.cfg.max_fuel_save,
             // a yellow flag is usually at least 3 laps.
@@ -138,15 +135,10 @@ impl Calculator {
             } else {
                 0
             },
-            ends: ends,
-            green: green.unwrap(),
-            yellow: yellow,
+            ends,
+            green,
+            yellow,
         };
-        // match ends {
-        //     EndsWith::Laps(l) => println!("{} laps togo", l),
-        //     EndsWith::Time(d) => println!("{:?} time to go", d),
-        //     EndsWith::LapsOrTime(l, d) => println!("{} laps or {:?} to go", l, d),
-        // }
         r.compute()
     }
 
