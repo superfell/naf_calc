@@ -186,7 +186,11 @@ impl IrCalc {
             // update race time/laps left from source, not strat
             let tick = this.session_time - cs.last.session_time;
             let dtick = Duration::from_millis((tick * 1000.0) as u64);
-            result.car.time.d -= dtick;
+            if result.car.time.d > dtick {
+                result.car.time.d -= dtick;
+            } else {
+                result.car.time.d = Duration::ZERO;
+            }
             match this.ends() {
                 EndsWith::Laps(l) => {
                     result.race.laps = l;
@@ -308,6 +312,7 @@ impl fmt::Display for CarState {
     }
 }
 
+#[derive(Debug)]
 struct CarStateFactory {
     session_num: ir::Var,
     session_time: ir::Var,
