@@ -1,10 +1,9 @@
 #![allow(dead_code)]
 
-use crate::ir::flags::{Flags, SessionState, TrackLocation};
-use crate::ir::DataUpdateResult;
-
 use super::calc::{Calculator, RaceConfig};
 use super::ir;
+use super::ir::flags::{Flags, SessionState, TrackLocation};
+use super::ir::DataUpdateResult;
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Strategy};
 use druid::{Data, Lens};
 use std::fmt;
@@ -46,7 +45,7 @@ impl Default for AmountLeft {
     }
 }
 #[derive(Clone, Debug, Data, Lens)]
-pub struct State {
+pub struct Estimation {
     pub connected: bool,            // connected to iracing
     pub car: AmountLeft,            // what's left in the car
     pub race: AmountLeft,           // what's left to go in the race
@@ -56,9 +55,9 @@ pub struct State {
     pub next_stop: Option<Pitstop>, // details on the next pitstop
     pub save: f32,                  // save this much fuel to skip the last pitstop
 }
-impl Default for State {
+impl Default for Estimation {
     fn default() -> Self {
-        State {
+        Estimation {
             connected: false,
             car: AmountLeft::default(),
             race: AmountLeft::default(),
@@ -71,33 +70,33 @@ impl Default for State {
     }
 }
 
-pub struct IrCalc {
+pub struct Estimator {
     client: ir::Client,
-    state: Option<CalcState>,
+    state: Option<SessionProgress>,
 }
 
 #[derive(Debug)]
-enum CalcError {
+enum Error {
     TypeMismatch(ir::Error),
     SessionExpired,
 }
-impl From<ir::Error> for CalcError {
+impl From<ir::Error> for Error {
     fn from(x: ir::Error) -> Self {
-        CalcError::TypeMismatch(x)
+        Error::TypeMismatch(x)
     }
 }
 
 // state needed by a running calculator
-struct CalcState {
+struct SessionProgress {
     ir: ir::Session,
     calc: Calculator,
-    f: CarStateFactory,
-    last: CarState,
-    lap_start: CarState,
+    f: TelemetryFactory,
+    last: IRacingTelemetryRow,
+    lap_start: IRacingTelemetryRow,
 }
-impl CalcState {
-    fn new(session: ir::Session) -> Result<CalcState, ir::Error> {
-        let session_info = SessionInfo::parse(unsafe { &session.session_info() }, 0);
+impl SessionProgress {
+    fn new(session: ir::Session) -> Result<SessionProgress, ir::Error> {
+        let session_info = IrSessionInfo::parse(unsafe { &session.session_info() }, 0);
         let cfg = RaceConfig {
             fuel_tank_size: (session_info.driver_car_fuel_max_ltr
                 * session_info.driver_car_max_fuel_pct) as f32,
@@ -109,9 +108,9 @@ impl CalcState {
             db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
         };
         let calc = Calculator::new(cfg).unwrap();
-        let f = CarStateFactory::new(&session);
+        let f = TelemetryFactory::new(&session);
         let last = f.read(&session)?;
-        Ok(CalcState {
+        Ok(SessionProgress {
             calc,
             f,
             ir: session,
@@ -119,13 +118,13 @@ impl CalcState {
             lap_start: last,
         })
     }
-    fn read(&mut self) -> Result<CarState, ir::Error> {
+    fn read(&mut self) -> Result<IRacingTelemetryRow, ir::Error> {
         self.f.read(&self.ir)
     }
-    fn update(&mut self, result: &mut State) -> Result<(), CalcError> {
+    fn update(&mut self, result: &mut Estimation) -> Result<(), Error> {
         unsafe {
             if self.ir.get_new_data() == DataUpdateResult::SessionExpired {
-                return Err(CalcError::SessionExpired);
+                return Err(Error::SessionExpired);
             }
         };
         let this = self.read()?;
@@ -204,29 +203,29 @@ impl CalcState {
         Ok(())
     }
 }
-impl Drop for CalcState {
+impl Drop for SessionProgress {
     fn drop(&mut self) {
         self.calc.save_laps().unwrap(); //TODO
     }
 }
-impl IrCalc {
-    pub fn new() -> IrCalc {
-        IrCalc {
+impl Estimator {
+    pub fn new() -> Estimator {
+        Estimator {
             client: ir::Client::new(),
             state: None,
         }
     }
-    pub fn update(&mut self, result: &mut State) {
+    pub fn update(&mut self, result: &mut Estimation) {
         unsafe {
             if self.state.is_none() {
                 match self.client.session() {
                     None => {
-                        *result = State::default();
+                        *result = Estimation::default();
                         return;
                     }
-                    Some(session) => match CalcState::new(session) {
+                    Some(session) => match SessionProgress::new(session) {
                         Err(_) => {
-                            *result = State::default();
+                            *result = Estimation::default();
                             return;
                         }
                         Ok(cs) => {
@@ -240,8 +239,8 @@ impl IrCalc {
         if let Some(cs) = &mut self.state {
             match cs.update(result) {
                 Ok(_) => {}
-                Err(CalcError::SessionExpired) => {
-                    *result = State::default();
+                Err(Error::SessionExpired) => {
+                    *result = Estimation::default();
                     self.state = None;
                 }
                 Err(e) => {
@@ -251,7 +250,7 @@ impl IrCalc {
         }
     }
 }
-fn strat_to_result(strat: &Strategy, result: &mut State) {
+fn strat_to_result(strat: &Strategy, result: &mut Estimation) {
     result.save = strat.fuel_to_save;
     if strat.stops.is_empty() {
         result.next_stop = None;
@@ -268,7 +267,7 @@ fn strat_to_result(strat: &Strategy, result: &mut State) {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct CarState {
+struct IRacingTelemetryRow {
     session_num: i32,
     session_time: f64,
     is_on_track: bool,
@@ -285,7 +284,7 @@ struct CarState {
     fuel_level: f32,
     lap_progress: f32,
 }
-impl CarState {
+impl IRacingTelemetryRow {
     fn time_remaining(&self) -> Duration {
         Duration::from_millis((self.session_time_remain * 1000.0) as u64)
     }
@@ -329,7 +328,7 @@ impl CarState {
         s
     }
 }
-impl fmt::Display for CarState {
+impl fmt::Display for IRacingTelemetryRow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -340,11 +339,6 @@ impl fmt::Display for CarState {
             self.player_track_surface,
             self.session_time_remain,
             self.session_laps_remain,
-            //            self.session_time_total,
-            //          self.session_laps_total,
-            //        self.lap,
-            //      self.lap_completed,
-            //    self.race_laps,
             self.fuel_level,
             self.lap_progress,
             self.session_flags,
@@ -353,7 +347,7 @@ impl fmt::Display for CarState {
 }
 
 #[derive(Debug)]
-struct CarStateFactory {
+struct TelemetryFactory {
     session_num: ir::Var,
     session_time: ir::Var,
     is_on_track: ir::Var,
@@ -370,10 +364,10 @@ struct CarStateFactory {
     fuel_level: ir::Var,
     lap_progress: ir::Var,
 }
-impl CarStateFactory {
-    fn new(c: &ir::Session) -> CarStateFactory {
+impl TelemetryFactory {
+    fn new(c: &ir::Session) -> TelemetryFactory {
         unsafe {
-            CarStateFactory {
+            TelemetryFactory {
                 session_num: c.find_var("SessionNum").unwrap(),
                 session_time: c.find_var("SessionTime").unwrap(),
                 is_on_track: c.find_var("IsOnTrack").unwrap(),
@@ -392,9 +386,9 @@ impl CarStateFactory {
             }
         }
     }
-    fn read(&self, c: &ir::Session) -> Result<CarState, ir::Error> {
+    fn read(&self, c: &ir::Session) -> Result<IRacingTelemetryRow, ir::Error> {
         unsafe {
-            Ok(CarState {
+            Ok(IRacingTelemetryRow {
                 session_num: c.value(&self.session_num)?,
                 session_time: c.value(&self.session_time)?,
                 is_on_track: c.value(&self.is_on_track)?,
@@ -416,7 +410,7 @@ impl CarStateFactory {
 }
 
 #[derive(Clone, Debug)]
-struct SessionInfo {
+struct IrSessionInfo {
     // WeekendInfo:
     track_id: i64,                    // 419
     track_display_name: String,       // Phoenix Raceway
@@ -435,15 +429,15 @@ struct SessionInfo {
     session_name: String, // QUALIFY
 }
 
-impl SessionInfo {
-    fn parse(session_info: &str, session_num: i32) -> SessionInfo {
+impl IrSessionInfo {
+    fn parse(session_info: &str, session_num: i32) -> IrSessionInfo {
         let yamls = yaml_rust::YamlLoader::load_from_str(session_info).unwrap(); // TODO
         let si = &yamls[0];
         let di = &si["DriverInfo"];
         let wi = &si["WeekendInfo"];
         let driver = &di["Drivers"][di["DriverCarIdx"].as_i64().unwrap() as usize];
         let sessions = &si["SessionInfo"]["Sessions"];
-        SessionInfo {
+        IrSessionInfo {
             track_id: wi["TrackID"].as_i64().unwrap(),
             track_display_name: wi["TrackDisplayName"].as_str().unwrap().to_string(),
             track_display_short_name: wi["TrackDisplayShortName"].as_str().unwrap().to_string(),

@@ -27,8 +27,8 @@ pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
 
 pub struct Client {
     conn: Option<Rc<Connection>>,
-    session_id: i32, // incremented each time we issue a new session. Allows for session to determine its expired even if
-                     // iRacing started a new session
+    session_id: i32, // Incremented each time we issue a new session. Allows for session to determine its expired even if
+                     // iRacing started a new session.
 }
 impl Client {
     pub fn new() -> Client {
@@ -37,7 +37,8 @@ impl Client {
             session_id: 0,
         }
     }
-    // attempts to connect to iracing if we're not already. returns true if we're now connected (or was already connected), false otherwise
+    // Attempts to connect to iracing if we're not already.
+    // Returns true if we're now connected (or was already connected), false otherwise
     unsafe fn connect(&mut self) -> bool {
         match &self.conn {
             Some(c) => c.connected(),
@@ -108,7 +109,6 @@ impl Session {
     }
     pub unsafe fn get_new_data(&mut self) -> DataUpdateResult {
         if self.expired() {
-            println!("ir::Session expired");
             self.expired = true;
             return DataUpdateResult::SessionExpired;
         }
@@ -127,8 +127,8 @@ impl Session {
                 DataUpdateResult::FailedToCopyRow
             }
             Ordering::Less => {
-                // if ours is newer than the latest, then the session has reset
-                // and this session is now expired.
+                // If ours is newer than the latest then iRacing has started a new
+                // session and this one is done.
                 self.expired = true;
                 DataUpdateResult::SessionExpired
             }

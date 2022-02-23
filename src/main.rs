@@ -4,7 +4,7 @@ use druid::{
     Widget, WidgetExt, WindowDesc,
 };
 use druid::{LensExt, TimerToken};
-use ircalc::{ADuration, AmountLeft, State};
+use ircalc::{ADuration, AmountLeft, Estimation};
 use std::time::Duration;
 
 mod calc;
@@ -14,21 +14,6 @@ mod strat;
 
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
-// fn main() {
-//     unsafe {
-//         let mut c = ir::Client::new();
-//         c.get_new_data();
-//         let mut v = c.find_var("SessionTime").unwrap();
-//         loop {
-//             if c.get_new_data() {
-//                 let t = c.var_value(&mut v);
-//                 println!("Session Time now {:?}", t);
-//             }
-//             thread::sleep(Duration::new(1, 0));
-//         }
-//     }
-// }
-
 fn main() {
     // describe the main window
     let main_window = WindowDesc::new(build_root_widget)
@@ -36,7 +21,7 @@ fn main() {
         .window_size((625.0, 480.0));
 
     // create the initial app state
-    let initial_state = ircalc::State::default();
+    let initial_state = ircalc::Estimation::default();
 
     // start the application
     AppLauncher::with_window(main_window)
@@ -44,7 +29,7 @@ fn main() {
         .expect("Failed to launch application");
 }
 
-fn lbl(l: &str, align: UnitPoint, w: f64, h: f64) -> Container<State> {
+fn lbl(l: &str, align: UnitPoint, w: f64, h: f64) -> Container<Estimation> {
     Container::new(
         SizedBox::new(Align::new(align, Label::new(l).with_text_size(32.0)))
             .width(w)
@@ -64,7 +49,7 @@ fn val<T: Data>(align: UnitPoint, w: f64, h: f64, text: impl Into<LabelText<T>>)
 
 const COLOR_KEY: Key<Color> = Key::new("color-key");
 
-fn build_root_widget() -> impl Widget<State> {
+fn build_root_widget() -> impl Widget<Estimation> {
     const R0_HEIGHT: f64 = 60.0;
     const R_HEIGHT: f64 = 75.0;
     const C0_WIDTH: f64 = 125.0;
@@ -83,7 +68,7 @@ fn build_root_widget() -> impl Widget<State> {
         }
     };
     let fmt_tm = |f: &ADuration, _e: &Env| format!("{}", f);
-    let mut calc = ircalc::IrCalc::new();
+    let mut calc = ircalc::Estimator::new();
 
     TimerWidget {
         on_fire: move |d| calc.update(d),
@@ -115,21 +100,23 @@ fn build_root_widget() -> impl Widget<State> {
                                     },
                                 )
                             })
-                            .lens(State::car.then(AmountLeft::fuel)),
+                            .lens(Estimation::car.then(AmountLeft::fuel)),
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32)
-                            .lens(State::race.then(AmountLeft::fuel)),
+                            .lens(Estimation::race.then(AmountLeft::fuel)),
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32)
-                            .lens(State::fuel_last_lap),
+                            .lens(Estimation::fuel_last_lap),
                     )
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32).lens(State::fuel_avg),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32)
+                            .lens(Estimation::fuel_avg),
                     )
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_ps).lens(State::next_stop),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_ps)
+                            .lens(Estimation::next_stop),
                     )
                     .expand_width(),
                 1.0,
@@ -139,11 +126,11 @@ fn build_root_widget() -> impl Widget<State> {
                     .with_child(lbl("Laps", UnitPoint::CENTER, C_WIDTH, R0_HEIGHT))
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_i32)
-                            .lens(State::car.then(AmountLeft::laps)),
+                            .lens(Estimation::car.then(AmountLeft::laps)),
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_i32)
-                            .lens(State::race.then(AmountLeft::laps)),
+                            .lens(Estimation::race.then(AmountLeft::laps)),
                     )
                     .with_child(lbl("Save", UnitPoint::RIGHT, C_WIDTH, R_HEIGHT))
                     .with_spacer(R_HEIGHT)
@@ -155,18 +142,18 @@ fn build_root_widget() -> impl Widget<State> {
                     .with_child(lbl("Time", UnitPoint::CENTER, C_WIDTH, R0_HEIGHT))
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_tm)
-                            .lens(State::car.then(AmountLeft::time)),
+                            .lens(Estimation::car.then(AmountLeft::time)),
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_tm)
-                            .lens(State::race.then(AmountLeft::time)),
+                            .lens(Estimation::race.then(AmountLeft::time)),
                     )
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32).lens(State::save),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32).lens(Estimation::save),
                     )
                     .with_spacer(R_HEIGHT)
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_i32).lens(State::stops),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_i32).lens(Estimation::stops),
                     ),
                 1.0,
             ),
