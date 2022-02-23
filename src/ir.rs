@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::time::Duration;
 
 use bitflags::bitflags;
 use num_derive::FromPrimitive;
@@ -30,9 +31,15 @@ pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
 
 #[derive(Debug)]
 pub enum Error {
+    SessionExpired,
     InvalidType,
     InvalidEnumValue(i32),
-    Win32(WIN32_ERROR),
+    VariableError(VariableError),
+}
+impl From<VariableError> for Error {
+    fn from(v: VariableError) -> Self {
+        Error::VariableError(v)
+    }
 }
 
 pub trait FromValue: Sized {
@@ -440,6 +447,8 @@ impl fmt::Debug for Var {
         write!(f, "{} ({}) {:?}", self.name(), self.desc(), self.var_type())
     }
 }
+
+#[derive(Debug)]
 struct Connection {
     file_mapping: HANDLE,
     shared_mem: *mut c_void,
@@ -449,15 +458,15 @@ struct Connection {
 impl Connection {
     // This will return an error if iRacing is not running.
     // However once you have a Connection it will remain usable even if iracing is exited and started again.
-    unsafe fn new() -> Result<Self, Error> {
+    unsafe fn new() -> Result<Self, WIN32_ERROR> {
         let file_mapping =
             Memory::OpenFileMappingA(Memory::FILE_MAP_READ.0, false, "Local\\IRSDKMemMapFileName");
         if file_mapping.is_invalid() {
-            return Err(Error::Win32(GetLastError()));
+            return Err(GetLastError());
         }
         let shared_mem = Memory::MapViewOfFile(file_mapping, Memory::FILE_MAP_READ, 0, 0, 0);
         if shared_mem.is_null() {
-            let e = Err(Error::Win32(GetLastError()));
+            let e = Err(GetLastError());
             CloseHandle(file_mapping);
             return e;
         }
@@ -467,7 +476,7 @@ impl Connection {
             "Local\\IRSDKDataValidEvent",
         );
         if new_data.is_invalid() {
-            let e = Err(Error::Win32(GetLastError()));
+            let e = Err(GetLastError());
             Memory::UnmapViewOfFile(shared_mem);
             CloseHandle(file_mapping);
             return e;
@@ -496,8 +505,8 @@ impl Connection {
         &(*self.header).var_buf[..l]
     }
     // returns the telemetry buffer with the highest tick count, along with the actual data
-    // this is the buffer in the shared mem, so you copy it.
-    unsafe fn lastest_row(&self) -> (&IrsdkBuf, &[u8]) {
+    // this is the buffer in the shared mem, so you should copy it.
+    unsafe fn lastest(&self) -> (&IrsdkBuf, &[u8]) {
         let b = self.buffers();
         let mut latest = &b[0];
         for buff in b {
@@ -520,135 +529,118 @@ impl Drop for Connection {
     }
 }
 
-pub struct Client {
-    conn: Option<Connection>,
-    last_tick_count: i32,
-    session_id: i32, // incremented each time we detect a new session, means anything cached from header is invalid when this changes
-    data: bytes::BytesMut,
+#[derive(Debug)]
+pub enum VariableError {
+    SessionExpired,
+    VariableNotFound,
+    VariableFromOtherSession,
 }
-impl Client {
-    pub unsafe fn new() -> Client {
-        Client {
-            conn: Connection::new().ok(),
-            last_tick_count: 0,
-            session_id: 0,
-            data: bytes::BytesMut::new(),
-        }
-    }
-    // attempts to connect to iracing if we're not already. returns true if we're now connected (or was already connected), false otherwise
-    unsafe fn connect(&mut self) -> bool {
-        match &self.conn {
-            Some(c) => c.connected(),
-            None => match Connection::new() {
-                Ok(c) => {
-                    let result = c.connected();
-                    self.conn = Some(c);
-                    self.session_id += 1;
-                    result
-                }
-                Err(_) => false,
-            },
-        }
-    }
+
+#[derive(Debug)]
+pub struct SessionExpired {}
+
+#[derive(Debug)]
+pub struct Session<'a> {
+    session_id: i32,
+    conn: &'a Connection,
+    last_tick_count: i32,
+    data: bytes::BytesMut,
+    expired: bool,
+}
+impl<'a> Session<'a> {
     pub unsafe fn connected(&self) -> bool {
-        match &self.conn {
-            Some(c) => c.connected(),
-            None => false,
-        }
+        (!self.expired) && self.conn.connected()
     }
-    pub unsafe fn wait_for_data(&mut self, wait: std::time::Duration) -> bool {
-        if !self.get_new_data() {
-            return false;
-        }
-        match &self.conn {
-            Some(c) => {
-                Threading::WaitForSingleObject(c.new_data, wait.as_millis().try_into().unwrap());
+    pub unsafe fn expired(&self) -> bool {
+        !self.connected()
+    }
+    pub unsafe fn wait_for_data(&mut self, wait: Duration) -> Result<bool, SessionExpired> {
+        match self.get_new_data() {
+            Err(e) => Err(e),
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                Threading::WaitForSingleObject(
+                    self.conn.new_data,
+                    wait.as_millis().try_into().unwrap(),
+                );
                 self.get_new_data()
             }
-            None => unreachable!("you shouldn't be able to get here"),
         }
     }
-    pub unsafe fn get_new_data(&mut self) -> bool {
-        if !self.connect() {
-            self.last_tick_count = 0;
-            self.session_id += 1;
-            return false;
+    pub unsafe fn get_new_data(&mut self) -> Result<bool, SessionExpired> {
+        if !self.conn.connected() {
+            self.expired = true;
+            return Err(SessionExpired {});
         }
-        match &self.conn {
-            None => {
-                unreachable!("You shouldn't be able to get here");
-            }
-            Some(c) => {
-                let (buf_hdr, row) = c.lastest_row();
-                match buf_hdr.tick_count.cmp(&self.last_tick_count) {
-                    Ordering::Greater => {
-                        for _tries in 0..2 {
-                            let curr_tick_count = buf_hdr.tick_count;
-                            self.data.clear();
-                            self.data.extend_from_slice(row);
-                            if curr_tick_count == buf_hdr.tick_count {
-                                self.last_tick_count = curr_tick_count;
-                                return true;
-                            }
-                        }
+        let (buf_hdr, row) = self.conn.lastest();
+        match buf_hdr.tick_count.cmp(&self.last_tick_count) {
+            Ordering::Greater => {
+                for _tries in 0..2 {
+                    let curr_tick_count = buf_hdr.tick_count;
+                    self.data.clear();
+                    self.data.extend_from_slice(row);
+                    if curr_tick_count == buf_hdr.tick_count {
+                        self.last_tick_count = curr_tick_count;
+                        return Ok(true);
                     }
-                    Ordering::Less => {
-                        // if ours is newer than the latest, then the session has reset
-                        // any variables created from the previous session need
-                        // recreating
-                        self.session_id += 1;
-                    }
-                    Ordering::Equal => {}
                 }
+                Ok(false)
             }
+            Ordering::Less => {
+                // if ours is newer than the latest, then the session has reset
+                // and this session is now expired.
+                self.expired = true;
+                return Err(SessionExpired {});
+            }
+            Ordering::Equal => Ok(false),
         }
-        false
     }
     pub unsafe fn dump_vars(&self) {
-        match &self.conn {
-            None => {}
-            Some(c) => {
-                for var_header in c.variables() {
-                    let mut var = Var {
-                        hdr: *var_header,
-                        session_id: self.session_id,
-                    };
-                    let value = self.var_value(&mut var);
-                    println!(
-                        "{:40} {:32}: {:?}: {}: {}: {:?}",
-                        var.desc(),
-                        var.name(),
-                        var.var_type(),
-                        var.count(),
-                        var.hdr.count_as_time,
-                        value,
-                    );
-                }
-            }
+        if !self.connected() {
+            return;
+        }
+        for var_header in self.conn.variables() {
+            let mut var = Var {
+                hdr: *var_header,
+                session_id: self.session_id,
+            };
+            let value = self.var_value(&mut var);
+            println!(
+                "{:40} {:32}: {:?}: {}: {}: {:?}",
+                var.desc(),
+                var.name(),
+                var.var_type(),
+                var.count(),
+                var.hdr.count_as_time,
+                value.unwrap(),
+            );
         }
     }
-    pub unsafe fn find_var(&self, name: &str) -> Option<Var> {
-        self.conn.as_ref().and_then(|c| {
-            for var_header in c.variables() {
+    pub unsafe fn find_var(&self, name: &str) -> Result<Var, VariableError> {
+        if !self.connected() {
+            Err(VariableError::SessionExpired)
+        } else {
+            for var_header in self.conn.variables() {
                 if var_header.has_name(name) {
-                    return Some(Var {
+                    return Ok(Var {
                         hdr: *var_header,
                         session_id: self.session_id,
                     });
                 }
             }
-            None
-        })
+            Err(VariableError::VariableNotFound)
+        }
     }
-    pub unsafe fn var_value(&self, var: &mut Var) -> Value {
+    pub unsafe fn var_value(&self, var: &mut Var) -> Result<Value, VariableError> {
+        if !self.connected() {
+            return Err(VariableError::SessionExpired);
+        }
         if var.session_id != self.session_id {
-            // There's an annoying edge case where this variable doesn't exist in the new session
-            // (think car specific variables)
-            println!("session changed, re-finding var {}", var.name());
-            *var = self.find_var(var.name()).unwrap();
+            // don't allow callers to use Var's that's aren't valid for this session
+            return Err(VariableError::VariableFromOtherSession);
         }
         let x = self.data.as_ptr().add(var.hdr.offset as usize);
-        if var.hdr.count == 1 {
+        Ok(if var.hdr.count == 1 {
             match var.hdr.var_type {
                 VarType::Char => Value::Char(*x),
                 VarType::Bool => Value::Bool(*(x as *const bool)),
@@ -669,32 +661,85 @@ impl Client {
                 VarType::Double => Value::Doubles(slice::from_raw_parts(x as *const f64, l)),
                 _ => todo!(), // ETCount
             }
-        }
+        })
     }
     pub unsafe fn value<T: FromValue>(&self, var: &mut Var) -> Result<T, Error> {
         let v = self.var_value(var);
-        T::var_result(&v)
+        match v {
+            Err(e) => Err(Error::VariableError(e)),
+            Ok(v) => T::var_result(&v),
+        }
     }
-    pub unsafe fn session_info_update(&self) -> Option<i32> {
-        self.conn.as_ref().map(|c| (*c.header).session_info_update)
+    pub unsafe fn session_info_update(&self) -> Result<i32, SessionExpired> {
+        if !self.connected() {
+            Err(SessionExpired {})
+        } else {
+            Ok((*self.conn.header).session_info_update)
+        }
     }
-    pub unsafe fn session_info(&self) -> Result<String, std::borrow::Cow<str>> {
-        match &self.conn {
-            None => Ok("".into()),
-            Some(c) => {
-                let p = c.shared_mem.add((*c.header).session_info_offset as usize) as *mut u8;
-                let mut bytes =
-                    std::slice::from_raw_parts(p, (*c.header).session_info_len as usize);
-                // session_info_len is the size of the buffer, not necessarily the size of the string
-                // so we have to look for the null terminatior.
-                for i in 0..bytes.len() {
-                    if bytes[i] == 0 {
-                        bytes = &bytes[0..i];
-                        break;
-                    }
+    pub unsafe fn session_info(&self) -> Result<String, SessionExpired> {
+        if !self.connected() {
+            Err(SessionExpired {})
+        } else {
+            let p = self
+                .conn
+                .shared_mem
+                .add((*self.conn.header).session_info_offset as usize)
+                as *const u8;
+            let mut bytes =
+                std::slice::from_raw_parts(p, (*self.conn.header).session_info_len as usize);
+            // session_info_len is the size of the buffer, not necessarily the size of the string
+            // so we have to look for the null terminatior.
+            for i in 0..bytes.len() {
+                if bytes[i] == 0 {
+                    bytes = &bytes[0..i];
+                    break;
                 }
-                WINDOWS_1252.decode(bytes, DecoderTrap::Replace)
             }
+            // as we're using replace, this should not ever return an error
+            Ok(WINDOWS_1252.decode(bytes, DecoderTrap::Replace).unwrap())
+        }
+    }
+}
+
+pub struct Client<'a> {
+    conn: Option<Connection>,
+    session_id: i32, // incremented each time we detect a new session, means anything cached from header is invalid when this changes
+}
+impl<'a> Client<'a> {
+    pub unsafe fn new() -> Client<'a> {
+        Client {
+            conn: Connection::new().ok(),
+            session_id: 0,
+        }
+    }
+    // attempts to connect to iracing if we're not already. returns true if we're now connected (or was already connected), false otherwise
+    unsafe fn connect(&mut self) -> bool {
+        match &self.conn {
+            Some(c) => c.connected(),
+            None => match Connection::new() {
+                Ok(c) => {
+                    let result = c.connected();
+                    self.conn = Some(c);
+                    result
+                }
+                Err(_) => false,
+            },
+        }
+    }
+    pub unsafe fn session(&'a mut self) -> Option<Session<'a>> {
+        if !self.connect() {
+            None
+        } else {
+            let sid = self.session_id;
+            self.session_id += 1;
+            Some(Session {
+                session_id: sid,
+                conn: self.conn.as_ref().unwrap(),
+                last_tick_count: 0,
+                data: bytes::BytesMut::new(),
+                expired: false,
+            })
         }
     }
 }

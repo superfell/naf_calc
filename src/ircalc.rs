@@ -71,25 +71,135 @@ impl Default for State {
     }
 }
 
-pub struct IrCalc {
-    client: ir::Client,
-    state: Option<CalcState>,
+pub struct IrCalc<'a> {
+    client: ir::Client<'a>,
+    state: Option<CalcState<'a>>,
 }
 
 // state needed by a running calculator
-struct CalcState {
+struct CalcState<'a> {
     calc: Calculator,
+    ir: ir::Session<'a>,
     f: CarStateFactory,
     last: CarState,
     lap_start: CarState,
 }
-impl Drop for CalcState {
+impl<'a> CalcState<'a> {
+    fn new(session: ir::Session<'a>) -> Result<CalcState<'a>, ir::Error> {
+        let mut session_info;
+        unsafe {
+            session_info = match session.session_info() {
+                Ok(s) => SessionInfo::parse(&s, 0),
+                Err(e) => return Err(ir::Error::SessionExpired),
+            };
+        }
+        let cfg = RaceConfig {
+            fuel_tank_size: (session_info.driver_car_fuel_max_ltr
+                * session_info.driver_car_max_fuel_pct) as f32,
+            max_fuel_save: 0.1,
+            track_id: session_info.track_id,
+            track_name: session_info.track_display_name,
+            layout_name: session_info.track_config_name,
+            car_id: session_info.car_id,
+            db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
+        };
+        let calc = Calculator::new(cfg).unwrap();
+        let mut f = CarStateFactory::new(&session)?;
+        let last = f.read(&session)?;
+        Ok(CalcState {
+            calc,
+            ir: session,
+            f,
+            last,
+            lap_start: last,
+        })
+    }
+    fn read(&self) -> Result<CarState, ir::Error> {
+        self.f.read(&self.ir)
+    }
+    fn update(&mut self, result: &mut State) -> Result<(), ir::Error> {
+        let this = self.read()?;
+        if this.session_time < self.last.session_time {
+            // reset
+            self.calc.save_laps().unwrap(); //TODO
+            self.last = this;
+            self.lap_start = this;
+        }
+        if (!self.lap_start.is_on_track) && this.is_on_track {
+            // ensure lap_start is from when we're in the car.
+            self.lap_start = this;
+        }
+        if self.last.player_track_surface == ir::TrackLocation::InPitStall
+            && this.player_track_surface != self.last.player_track_surface
+        {
+            // reset lap start when we leave the pit box
+            self.lap_start = this;
+        }
+        if this.session_state == ir::SessionState::ParadeLaps
+            && self.last.session_state != this.session_state
+        {
+            // reset lap start when the parade lap starts.
+            self.lap_start = this;
+            // show the stratagy if there's one available
+            if let Some(x) = self.calc.strat(this.ends()) {
+                strat_to_result(&x, result);
+            }
+        }
+        if this.lap_progress < 0.1 && self.last.lap_progress > 0.9 {
+            let new_lap = Lap {
+                fuel_left: this.fuel_level,
+                fuel_used: self.lap_start.fuel_level - this.fuel_level,
+                // TODO, this is not interopolating the lap
+                time: Duration::from_millis(
+                    ((this.session_time - self.lap_start.session_time) * 1000.0) as u64,
+                ),
+                condition: this.lap_state() | self.lap_start.lap_state(),
+            };
+            if this.session_state != ir::SessionState::Checkered
+                && this.session_state != ir::SessionState::CoolDown
+            {
+                self.calc.add_lap(new_lap);
+                if let Some(strat) = self.calc.strat(this.ends()) {
+                    strat_to_result(&strat, result)
+                }
+            }
+            result.fuel_last_lap = new_lap.fuel_used;
+            self.lap_start = this;
+        }
+        // update status info in result
+        result.car.fuel = this.fuel_level;
+        // update race time/laps left from source, not strat
+        let tick = this.session_time - self.last.session_time;
+        let dtick = Duration::from_millis((tick * 1000.0) as u64);
+        if result.car.time.d > dtick {
+            result.car.time.d -= dtick;
+        } else {
+            result.car.time.d = Duration::ZERO;
+        }
+        match this.ends() {
+            EndsWith::Laps(l) => {
+                result.race.laps = l;
+                result.race.time.d -= dtick;
+            }
+            EndsWith::Time(d) => {
+                result.race.time.d = d;
+            }
+            EndsWith::LapsOrTime(l, d) => {
+                result.race.laps = l;
+                result.race.time.d = d;
+            }
+        }
+        self.last = this;
+        Ok(())
+    }
+}
+impl<'a> Drop for CalcState<'a> {
     fn drop(&mut self) {
         self.calc.save_laps().unwrap(); //TODO
     }
 }
-impl IrCalc {
-    pub fn new() -> IrCalc {
+impl<'a> IrCalc<'a> {
+    pub fn new() -> IrCalc<'a> {
         IrCalc {
             client: unsafe { ir::Client::new() },
             state: None,
@@ -97,134 +207,59 @@ impl IrCalc {
     }
     pub fn update(&mut self, result: &mut State) {
         unsafe {
-            if !self.client.get_new_data() {
-                if !self.client.connected() {
+            if self.state.is_some() {
+                if self.state.unwrap().ir.expired() {
                     *result = State::default();
-                    self.state = None;
-                    return;
+                    self.state = None
                 }
-                return;
             }
-        }
-        result.connected = true;
-        if self.state.is_none() {
-            let session_info;
-            unsafe {
-                session_info = match self.client.session_info() {
-                    Ok(s) => SessionInfo::parse(&s, 0),
-                    Err(e) => panic!("failed to decode session string {}", e),
-                };
+            if self.state.is_none() {
+                match self.client.session() {
+                    None => {
+                        *result = State::default();
+                        return;
+                    }
+                    Some(session) => match CalcState::new(session) {
+                        Err(e) => {
+                            *result = State::default();
+                            return;
+                        }
+                        Ok(cs) => {
+                            self.state = Some(cs);
+                            result.connected = true;
+                        }
+                    },
+                }
             }
-            let cfg = RaceConfig {
-                fuel_tank_size: (session_info.driver_car_fuel_max_ltr
-                    * session_info.driver_car_max_fuel_pct) as f32,
-                max_fuel_save: 0.1,
-                track_id: session_info.track_id,
-                track_name: session_info.track_display_name,
-                layout_name: session_info.track_config_name,
-                car_id: session_info.car_id,
-                db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
-            };
-            let calc = Calculator::new(cfg).unwrap();
-            let mut f = CarStateFactory::new(&self.client);
-            let last = f.read(&self.client);
-            self.state = Some(CalcState {
-                calc,
-                f,
-                last,
-                lap_start: last,
-            });
         }
         if let Some(cs) = &mut self.state {
-            let this = cs.f.read(&self.client);
-            if this.session_time < cs.last.session_time {
-                // reset
-                cs.calc.save_laps().unwrap(); //TODO
-                cs.last = this;
-                cs.lap_start = this;
-            }
-            if (!cs.lap_start.is_on_track) && this.is_on_track {
-                // ensure lap_start is from when we're in the car.
-                cs.lap_start = this;
-            }
-            if cs.last.player_track_surface == ir::TrackLocation::InPitStall
-                && this.player_track_surface != cs.last.player_track_surface
-            {
-                // reset lap start when we leave the pit box
-                cs.lap_start = this;
-            }
-            if this.session_state == ir::SessionState::ParadeLaps
-                && cs.last.session_state != this.session_state
-            {
-                // reset lap start when the parade lap starts.
-                cs.lap_start = this;
-                // show the stratagy if there's one available
-                if let Some(x) = cs.calc.strat(this.ends()) {
-                    Self::strat_to_result(&x, result);
+            match cs.update(result) {
+                Ok(_) => {}
+                Err(ir::Error::SessionExpired) => {
+                    *result = State::default();
+                    self.state = None;
+                }
+                Err(e) => {
+                    panic!("programmer error {:?}", e);
                 }
             }
-            if this.lap_progress < 0.1 && cs.last.lap_progress > 0.9 {
-                let new_lap = Lap {
-                    fuel_left: this.fuel_level,
-                    fuel_used: cs.lap_start.fuel_level - this.fuel_level,
-                    // TODO, this is not interopolating the lap
-                    time: Duration::from_millis(
-                        ((this.session_time - cs.lap_start.session_time) * 1000.0) as u64,
-                    ),
-                    condition: this.lap_state() | cs.lap_start.lap_state(),
-                };
-                if this.session_state != ir::SessionState::Checkered
-                    && this.session_state != ir::SessionState::CoolDown
-                {
-                    cs.calc.add_lap(new_lap);
-                    if let Some(strat) = cs.calc.strat(this.ends()) {
-                        Self::strat_to_result(&strat, result)
-                    }
-                }
-                result.fuel_last_lap = new_lap.fuel_used;
-                cs.lap_start = this;
-            }
-            // update status info in result
-            result.car.fuel = this.fuel_level;
-            // update race time/laps left from source, not strat
-            let tick = this.session_time - cs.last.session_time;
-            let dtick = Duration::from_millis((tick * 1000.0) as u64);
-            if result.car.time.d > dtick {
-                result.car.time.d -= dtick;
-            } else {
-                result.car.time.d = Duration::ZERO;
-            }
-            match this.ends() {
-                EndsWith::Laps(l) => {
-                    result.race.laps = l;
-                    result.race.time.d -= dtick;
-                }
-                EndsWith::Time(d) => {
-                    result.race.time.d = d;
-                }
-                EndsWith::LapsOrTime(l, d) => {
-                    result.race.laps = l;
-                    result.race.time.d = d;
-                }
-            }
-            cs.last = this;
         }
     }
-    fn strat_to_result(strat: &Strategy, result: &mut State) {
-        result.save = strat.fuel_to_save;
-        if strat.stops.is_empty() {
-            result.next_stop = None;
-        } else {
-            result.next_stop = Some(*strat.stops.first().unwrap());
-        }
-        result.stops = strat.stops.len() as i32;
-        result.fuel_avg = strat.green.fuel;
-        result.car.laps = strat.stints.first().map(|s| s.laps).unwrap_or_default();
-        result.car.time.d = strat.stints.first().map(|s| s.time).unwrap_or_default();
-        result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
-        result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
-        result.race.time.d = strat.stints.iter().map(|s| s.time).sum();
+}
+fn strat_to_result(strat: &Strategy, result: &mut State) {
+    result.save = strat.fuel_to_save;
+    if strat.stops.is_empty() {
+        result.next_stop = None;
+    } else {
+        result.next_stop = Some(*strat.stops.first().unwrap());
     }
+    result.stops = strat.stops.len() as i32;
+    result.fuel_avg = strat.green.fuel;
+    result.car.laps = strat.stints.first().map(|s| s.laps).unwrap_or_default();
+    result.car.time.d = strat.stints.first().map(|s| s.time).unwrap_or_default();
+    result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
+    result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
+    result.race.time.d = strat.stints.iter().map(|s| s.time).sum();
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -334,46 +369,46 @@ struct CarStateFactory {
     lap_progress: ir::Var,
 }
 impl CarStateFactory {
-    fn new(c: &ir::Client) -> CarStateFactory {
+    fn new(c: &ir::Session) -> Result<CarStateFactory, ir::VariableError> {
         unsafe {
-            CarStateFactory {
-                session_num: c.find_var("SessionNum").unwrap(),
-                session_time: c.find_var("SessionTime").unwrap(),
-                is_on_track: c.find_var("IsOnTrack").unwrap(),
-                player_track_surface: c.find_var("PlayerTrackSurface").unwrap(),
-                session_state: c.find_var("SessionState").unwrap(),
-                session_flags: c.find_var("SessionFlags").unwrap(),
-                session_time_remain: c.find_var("SessionTimeRemain").unwrap(),
-                session_laps_remain: c.find_var("SessionLapsRemainEx").unwrap(),
-                session_time_total: c.find_var("SessionTimeTotal").unwrap(),
-                session_laps_total: c.find_var("SessionLapsTotal").unwrap(),
-                lap: c.find_var("Lap").unwrap(),
-                lap_completed: c.find_var("LapCompleted").unwrap(),
-                race_laps: c.find_var("RaceLaps").unwrap(),
-                fuel_level: c.find_var("FuelLevel").unwrap(),
-                lap_progress: c.find_var("LapDistPct").unwrap(),
-            }
+            Ok(CarStateFactory {
+                session_num: c.find_var("SessionNum")?,
+                session_time: c.find_var("SessionTime")?,
+                is_on_track: c.find_var("IsOnTrack")?,
+                player_track_surface: c.find_var("PlayerTrackSurface")?,
+                session_state: c.find_var("SessionState")?,
+                session_flags: c.find_var("SessionFlags")?,
+                session_time_remain: c.find_var("SessionTimeRemain")?,
+                session_laps_remain: c.find_var("SessionLapsRemainEx")?,
+                session_time_total: c.find_var("SessionTimeTotal")?,
+                session_laps_total: c.find_var("SessionLapsTotal")?,
+                lap: c.find_var("Lap")?,
+                lap_completed: c.find_var("LapCompleted")?,
+                race_laps: c.find_var("RaceLaps")?,
+                fuel_level: c.find_var("FuelLevel")?,
+                lap_progress: c.find_var("LapDistPct")?,
+            })
         }
     }
-    fn read(&mut self, c: &ir::Client) -> CarState {
+    fn read(&mut self, c: &ir::Session) -> Result<CarState, ir::Error> {
         unsafe {
-            CarState {
-                session_num: c.value(&mut self.session_num).unwrap(),
-                session_time: c.value(&mut self.session_time).unwrap(),
-                is_on_track: c.value(&mut self.is_on_track).unwrap(),
-                player_track_surface: c.value(&mut self.player_track_surface).unwrap(),
-                session_state: c.value(&mut self.session_state).unwrap(),
-                session_flags: c.value(&mut self.session_flags).unwrap(),
-                session_time_remain: c.value(&mut self.session_time_remain).unwrap(),
-                session_laps_remain: c.value(&mut self.session_laps_remain).unwrap(),
-                session_time_total: c.value(&mut self.session_time_total).unwrap(),
-                session_laps_total: c.value(&mut self.session_laps_total).unwrap(),
-                lap: c.value(&mut self.lap).unwrap(),
-                lap_completed: c.value(&mut self.lap_completed).unwrap(),
-                race_laps: c.value(&mut self.race_laps).unwrap(),
-                fuel_level: c.value(&mut self.fuel_level).unwrap(),
-                lap_progress: c.value(&mut self.lap_progress).unwrap(),
-            }
+            Ok(CarState {
+                session_num: c.value(&mut self.session_num)?,
+                session_time: c.value(&mut self.session_time)?,
+                is_on_track: c.value(&mut self.is_on_track)?,
+                player_track_surface: c.value(&mut self.player_track_surface)?,
+                session_state: c.value(&mut self.session_state)?,
+                session_flags: c.value(&mut self.session_flags)?,
+                session_time_remain: c.value(&mut self.session_time_remain)?,
+                session_laps_remain: c.value(&mut self.session_laps_remain)?,
+                session_time_total: c.value(&mut self.session_time_total)?,
+                session_laps_total: c.value(&mut self.session_laps_total)?,
+                lap: c.value(&mut self.lap)?,
+                lap_completed: c.value(&mut self.lap_completed)?,
+                race_laps: c.value(&mut self.race_laps)?,
+                fuel_level: c.value(&mut self.fuel_level)?,
+                lap_progress: c.value(&mut self.lap_progress)?,
+            })
         }
     }
 }
@@ -400,7 +435,7 @@ struct SessionInfo {
 
 impl SessionInfo {
     fn parse(session_info: &str, session_num: i32) -> SessionInfo {
-        let yamls = yaml_rust::YamlLoader::load_from_str(session_info).unwrap();
+        let yamls = yaml_rust::YamlLoader::load_from_str(session_info).unwrap(); // TODO
         let si = &yamls[0];
         let di = &si["DriverInfo"];
         let wi = &si["WeekendInfo"];
