@@ -4,6 +4,7 @@ extern crate encoding;
 extern crate num;
 
 use core::fmt;
+use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -414,6 +415,7 @@ impl IrsdkVarHeader {
 
 pub struct Var {
     hdr: IrsdkVarHeader,
+    session_id: i32,
 }
 #[allow(dead_code)]
 impl Var {
@@ -486,7 +488,7 @@ impl Connection {
             .shared_mem
             .add((*self.header).var_header_offset as usize)
             as *const IrsdkVarHeader;
-        return slice::from_raw_parts(vhbase, (*self.header).num_vars as usize);
+        slice::from_raw_parts(vhbase, (*self.header).num_vars as usize)
     }
     unsafe fn buffers(&self) -> &[IrsdkBuf] {
         let l = (*self.header).num_buf as usize;
@@ -521,6 +523,7 @@ impl Drop for Connection {
 pub struct Client {
     conn: Option<Connection>,
     last_tick_count: i32,
+    session_id: i32, // incremented each time we detect a new session, means anything cached from header is invalid when this changes
     data: bytes::BytesMut,
 }
 impl Client {
@@ -528,6 +531,7 @@ impl Client {
         Client {
             conn: Connection::new().ok(),
             last_tick_count: 0,
+            session_id: 0,
             data: bytes::BytesMut::new(),
         }
     }
@@ -539,6 +543,7 @@ impl Client {
                 Ok(c) => {
                     let result = c.connected();
                     self.conn = Some(c);
+                    self.session_id += 1;
                     result
                 }
                 Err(_) => false,
@@ -566,6 +571,7 @@ impl Client {
     pub unsafe fn get_new_data(&mut self) -> bool {
         if !self.connect() {
             self.last_tick_count = 0;
+            self.session_id += 1;
             return false;
         }
         match &self.conn {
@@ -574,17 +580,26 @@ impl Client {
             }
             Some(c) => {
                 let (buf_hdr, row) = c.lastest_row();
-                if buf_hdr.tick_count > self.last_tick_count {
-                    for _tries in 0..2 {
-                        let curr_tick_count = buf_hdr.tick_count;
-                        self.data.clear();
-                        self.data.extend_from_slice(row);
-                        if curr_tick_count == buf_hdr.tick_count {
-                            self.last_tick_count = curr_tick_count;
-                            return true;
+                match buf_hdr.tick_count.cmp(&self.last_tick_count) {
+                    Ordering::Greater => {
+                        for _tries in 0..2 {
+                            let curr_tick_count = buf_hdr.tick_count;
+                            self.data.clear();
+                            self.data.extend_from_slice(row);
+                            if curr_tick_count == buf_hdr.tick_count {
+                                self.last_tick_count = curr_tick_count;
+                                return true;
+                            }
                         }
                     }
-                };
+                    Ordering::Less => {
+                        // if ours is newer than the latest, then the session has reset
+                        // any variables created from the previous session need
+                        // recreating
+                        self.session_id += 1;
+                    }
+                    Ordering::Equal => {}
+                }
             }
         }
         false
@@ -594,8 +609,11 @@ impl Client {
             None => {}
             Some(c) => {
                 for var_header in c.variables() {
-                    let var = Var { hdr: *var_header };
-                    let value = self.var_value(&var);
+                    let mut var = Var {
+                        hdr: *var_header,
+                        session_id: self.session_id,
+                    };
+                    let value = self.var_value(&mut var);
                     println!(
                         "{:40} {:32}: {:?}: {}: {}: {:?}",
                         var.desc(),
@@ -613,13 +631,22 @@ impl Client {
         self.conn.as_ref().and_then(|c| {
             for var_header in c.variables() {
                 if var_header.has_name(name) {
-                    return Some(Var { hdr: *var_header });
+                    return Some(Var {
+                        hdr: *var_header,
+                        session_id: self.session_id,
+                    });
                 }
             }
             None
         })
     }
-    pub unsafe fn var_value(&self, var: &Var) -> Value {
+    pub unsafe fn var_value(&self, var: &mut Var) -> Value {
+        if var.session_id != self.session_id {
+            // There's an annoying edge case where this variable doesn't exist in the new session
+            // (think car specific variables)
+            println!("session changed, re-finding var {}", var.name());
+            *var = self.find_var(var.name()).unwrap();
+        }
         let x = self.data.as_ptr().add(var.hdr.offset as usize);
         if var.hdr.count == 1 {
             match var.hdr.var_type {
@@ -644,7 +671,7 @@ impl Client {
             }
         }
     }
-    pub unsafe fn value<T: FromValue>(&self, var: &Var) -> Result<T, Error> {
+    pub unsafe fn value<T: FromValue>(&self, var: &mut Var) -> Result<T, Error> {
         let v = self.var_value(var);
         T::var_result(&v)
     }

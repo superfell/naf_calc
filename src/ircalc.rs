@@ -126,7 +126,7 @@ impl IrCalc {
                 db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
             };
             let calc = Calculator::new(cfg).unwrap();
-            let f = CarStateFactory::new(&self.client);
+            let mut f = CarStateFactory::new(&self.client);
             let last = f.read(&self.client);
             self.state = Some(CalcState {
                 calc,
@@ -355,24 +355,24 @@ impl CarStateFactory {
             }
         }
     }
-    fn read(&self, c: &ir::Client) -> CarState {
+    fn read(&mut self, c: &ir::Client) -> CarState {
         unsafe {
             CarState {
-                session_num: c.value(&self.session_num).unwrap(),
-                session_time: c.value(&self.session_time).unwrap(),
-                is_on_track: c.value(&self.is_on_track).unwrap(),
-                player_track_surface: c.value(&self.player_track_surface).unwrap(),
-                session_state: c.value(&self.session_state).unwrap(),
-                session_flags: c.value(&self.session_flags).unwrap(),
-                session_time_remain: c.value(&self.session_time_remain).unwrap(),
-                session_laps_remain: c.value(&self.session_laps_remain).unwrap(),
-                session_time_total: c.value(&self.session_time_total).unwrap(),
-                session_laps_total: c.value(&self.session_laps_total).unwrap(),
-                lap: c.value(&self.lap).unwrap(),
-                lap_completed: c.value(&self.lap_completed).unwrap(),
-                race_laps: c.value(&self.race_laps).unwrap(),
-                fuel_level: c.value(&self.fuel_level).unwrap(),
-                lap_progress: c.value(&self.lap_progress).unwrap(),
+                session_num: c.value(&mut self.session_num).unwrap(),
+                session_time: c.value(&mut self.session_time).unwrap(),
+                is_on_track: c.value(&mut self.is_on_track).unwrap(),
+                player_track_surface: c.value(&mut self.player_track_surface).unwrap(),
+                session_state: c.value(&mut self.session_state).unwrap(),
+                session_flags: c.value(&mut self.session_flags).unwrap(),
+                session_time_remain: c.value(&mut self.session_time_remain).unwrap(),
+                session_laps_remain: c.value(&mut self.session_laps_remain).unwrap(),
+                session_time_total: c.value(&mut self.session_time_total).unwrap(),
+                session_laps_total: c.value(&mut self.session_laps_total).unwrap(),
+                lap: c.value(&mut self.lap).unwrap(),
+                lap_completed: c.value(&mut self.lap_completed).unwrap(),
+                race_laps: c.value(&mut self.race_laps).unwrap(),
+                fuel_level: c.value(&mut self.fuel_level).unwrap(),
+                lap_progress: c.value(&mut self.lap_progress).unwrap(),
             }
         }
     }

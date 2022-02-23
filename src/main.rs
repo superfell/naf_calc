@@ -14,6 +14,21 @@ mod strat;
 
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
+// fn main() {
+//     unsafe {
+//         let mut c = ir::Client::new();
+//         c.get_new_data();
+//         let mut v = c.find_var("SessionTime").unwrap();
+//         loop {
+//             if c.get_new_data() {
+//                 let t = c.var_value(&mut v);
+//                 println!("Session Time now {:?}", t);
+//             }
+//             thread::sleep(Duration::new(1, 0));
+//         }
+//     }
+// }
+
 fn main() {
     // describe the main window
     let main_window = WindowDesc::new(build_root_widget)
