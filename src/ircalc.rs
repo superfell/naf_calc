@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::ir::flags::{Flags, SessionState, TrackLocation};
 use crate::ir::DataUpdateResult;
 
 use super::calc::{Calculator, RaceConfig};
@@ -139,13 +140,13 @@ impl CalcState {
             // ensure lap_start is from when we're in the car.
             self.lap_start = this;
         }
-        if self.last.player_track_surface == ir::TrackLocation::InPitStall
+        if self.last.player_track_surface == TrackLocation::InPitStall
             && this.player_track_surface != self.last.player_track_surface
         {
             // reset lap start when we leave the pit box
             self.lap_start = this;
         }
-        if this.session_state == ir::SessionState::ParadeLaps
+        if this.session_state == SessionState::ParadeLaps
             && self.last.session_state != this.session_state
         {
             // reset lap start when the parade lap starts.
@@ -165,8 +166,8 @@ impl CalcState {
                 ),
                 condition: this.lap_state() | self.lap_start.lap_state(),
             };
-            if this.session_state != ir::SessionState::Checkered
-                && this.session_state != ir::SessionState::CoolDown
+            if this.session_state != SessionState::Checkered
+                && this.session_state != SessionState::CoolDown
             {
                 self.calc.add_lap(new_lap);
                 if let Some(strat) = self.calc.strat(this.ends()) {
@@ -271,9 +272,9 @@ struct CarState {
     session_num: i32,
     session_time: f64,
     is_on_track: bool,
-    player_track_surface: ir::TrackLocation,
-    session_state: ir::SessionState,
-    session_flags: ir::Flags,
+    player_track_surface: TrackLocation,
+    session_state: SessionState,
+    session_flags: Flags,
     session_time_remain: f64,
     session_laps_remain: i32,
     session_time_total: f64,
@@ -308,24 +309,21 @@ impl CarState {
         let mut s = LapState::empty();
         let f = self.session_flags;
         if f.intersects(
-            ir::Flags::YELLOW
-                | ir::Flags::YELLOW_WAVING
-                | ir::Flags::CAUTION_WAVING
-                | ir::Flags::CAUTION,
+            Flags::YELLOW | Flags::YELLOW_WAVING | Flags::CAUTION_WAVING | Flags::CAUTION,
         ) {
             s |= LapState::YELLOW
         }
-        if self.player_track_surface == ir::TrackLocation::ApproachingPits
-            || self.player_track_surface == ir::TrackLocation::InPitStall
+        if self.player_track_surface == TrackLocation::ApproachingPits
+            || self.player_track_surface == TrackLocation::InPitStall
         {
             s |= LapState::PITTED
         }
-        if self.session_state == ir::SessionState::ParadeLaps
-            || self.session_state == ir::SessionState::Warmup
+        if self.session_state == SessionState::ParadeLaps
+            || self.session_state == SessionState::Warmup
         {
             s |= LapState::PACE_LAP
         }
-        if f.intersects(ir::Flags::ONE_TO_GREEN) && s.intersects(LapState::YELLOW) {
+        if f.intersects(Flags::ONE_TO_GREEN) && s.intersects(LapState::YELLOW) {
             s |= LapState::ONE_TO_GREEN
         }
         s
