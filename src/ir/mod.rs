@@ -26,7 +26,7 @@ pub const IRSDK_UNLIMITED_LAPS: i32 = 32767;
 pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
 
 pub struct Client {
-    conn: Option<Rc<Box<Connection>>>,
+    conn: Option<Rc<Connection>>,
     session_id: i32, // incremented each time we issue a new session. Allows for session to determine its expired even if
                      // iRacing started a new session
 }
@@ -44,7 +44,7 @@ impl Client {
             None => match Connection::new() {
                 Ok(c) => {
                     let result = c.connected();
-                    self.conn = Some(Rc::new(Box::new(c)));
+                    self.conn = Some(Rc::new(c));
                     result
                 }
                 Err(_) => false,
@@ -85,7 +85,7 @@ pub enum DataUpdateResult {
 #[derive(Debug)]
 pub struct Session {
     session_id: i32,
-    conn: Rc<Box<Connection>>,
+    conn: Rc<Connection>,
     last_tick_count: i32,
     data: bytes::BytesMut,
     expired: bool,
