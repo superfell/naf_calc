@@ -10,7 +10,6 @@ use std::os::raw::c_char;
 
 use bitflags::bitflags;
 use num_derive::FromPrimitive;
-use std::ptr;
 use std::slice;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WIN32_ERROR};
 use windows::Win32::System::Memory;
@@ -482,6 +481,32 @@ impl Connection {
     unsafe fn connected(&self) -> bool {
         (*self.header).status.intersects(StatusField::CONNECTED)
     }
+    unsafe fn variables(&self) -> &[IrsdkVarHeader] {
+        let vhbase = self
+            .shared_mem
+            .add((*self.header).var_header_offset as usize)
+            as *const IrsdkVarHeader;
+        return slice::from_raw_parts(vhbase, (*self.header).num_vars as usize);
+    }
+    unsafe fn buffers(&self) -> &[IrsdkBuf] {
+        let l = (*self.header).num_buf as usize;
+        assert!(l <= IRSDK_MAX_BUFS);
+        &(*self.header).var_buf[..l]
+    }
+    // returns the telemetry buffer with the highest tick count, along with the actual data
+    // this is the buffer in the shared mem, so you copy it.
+    unsafe fn lastest_row(&self) -> (&IrsdkBuf, &[u8]) {
+        let b = self.buffers();
+        let mut latest = &b[0];
+        for buff in b {
+            if buff.tick_count > latest.tick_count {
+                latest = buff;
+            }
+        }
+        let buf_len = (*self.header).buf_len as usize;
+        let src = self.shared_mem.add(latest.buf_offset as usize);
+        return (latest, slice::from_raw_parts(src as *const u8, buf_len));
+    }
 }
 impl Drop for Connection {
     fn drop(&mut self) {
@@ -548,23 +573,13 @@ impl Client {
                 unreachable!("You shouldn't be able to get here");
             }
             Some(c) => {
-                let mut latest: usize = 0;
-                for i in 1..((*c.header).num_buf as usize) {
-                    if (*c.header).var_buf[latest].tick_count < (*c.header).var_buf[i].tick_count {
-                        latest = i;
-                    }
-                }
-                let buf_len = (*c.header).buf_len as usize;
-                let b = &(*c.header).var_buf[latest];
-                if self.last_tick_count < b.tick_count {
-                    if self.data.capacity() < buf_len {
-                        self.data.reserve(buf_len)
-                    }
+                let (buf_hdr, row) = c.lastest_row();
+                if buf_hdr.tick_count > self.last_tick_count {
                     for _tries in 0..2 {
-                        let curr_tick_count = b.tick_count;
-                        let src = c.shared_mem.add(b.buf_offset as usize);
-                        ptr::copy_nonoverlapping(src.cast(), self.data.as_mut_ptr(), buf_len);
-                        if curr_tick_count == b.tick_count {
+                        let curr_tick_count = buf_hdr.tick_count;
+                        self.data.clear();
+                        self.data.extend_from_slice(row);
+                        if curr_tick_count == buf_hdr.tick_count {
                             self.last_tick_count = curr_tick_count;
                             return true;
                         }
@@ -578,11 +593,8 @@ impl Client {
         match &self.conn {
             None => {}
             Some(c) => {
-                let vhbase = c.shared_mem.add((*c.header).var_header_offset as usize)
-                    as *const IrsdkVarHeader;
-                for i in 0..(*c.header).num_vars {
-                    let vh = vhbase.add(i as usize);
-                    let var = Var { hdr: *vh };
+                for var_header in c.variables() {
+                    let var = Var { hdr: *var_header };
                     let value = self.var_value(&var);
                     println!(
                         "{:40} {:32}: {:?}: {}: {}: {:?}",
@@ -599,12 +611,9 @@ impl Client {
     }
     pub unsafe fn find_var(&self, name: &str) -> Option<Var> {
         self.conn.as_ref().and_then(|c| {
-            let vhbase =
-                c.shared_mem.add((*c.header).var_header_offset as usize) as *const IrsdkVarHeader;
-            for i in 0..(*c.header).num_vars as usize {
-                let vh = vhbase.add(i);
-                if (*vh).has_name(name) {
-                    return Some(Var { hdr: *vh });
+            for var_header in c.variables() {
+                if var_header.has_name(name) {
+                    return Some(Var { hdr: *var_header });
                 }
             }
             None
