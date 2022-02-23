@@ -1,16 +1,15 @@
 #![allow(dead_code)]
 
-use std::time::Duration;
-
-use crate::strat::Strategy;
+use crate::ir::DataUpdateResult;
 
 use super::calc::{Calculator, RaceConfig};
 use super::ir;
-use super::strat::{EndsWith, Lap, LapState, Pitstop};
+use super::strat::{EndsWith, Lap, LapState, Pitstop, Strategy};
 use druid::{Data, Lens};
 use std::fmt;
+use std::time::Duration;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ADuration {
     d: Duration,
 }
@@ -30,7 +29,7 @@ impl fmt::Display for ADuration {
     }
 }
 
-#[derive(Clone, Data, Lens)]
+#[derive(Clone, Debug, Data, Lens)]
 pub struct AmountLeft {
     pub fuel: f32,
     pub laps: i32,
@@ -45,7 +44,7 @@ impl Default for AmountLeft {
         }
     }
 }
-#[derive(Clone, Data, Lens)]
+#[derive(Clone, Debug, Data, Lens)]
 pub struct State {
     pub connected: bool,            // connected to iracing
     pub car: AmountLeft,            // what's left in the car
@@ -71,28 +70,33 @@ impl Default for State {
     }
 }
 
-pub struct IrCalc<'a> {
-    client: ir::Client<'a>,
-    state: Option<CalcState<'a>>,
+pub struct IrCalc {
+    client: ir::Client,
+    state: Option<CalcState>,
+}
+
+#[derive(Debug)]
+enum CalcError {
+    TypeMismatch(ir::Error),
+    SessionExpired,
+}
+impl From<ir::Error> for CalcError {
+    fn from(x: ir::Error) -> Self {
+        CalcError::TypeMismatch(x)
+    }
 }
 
 // state needed by a running calculator
-struct CalcState<'a> {
+struct CalcState {
+    ir: ir::Session,
     calc: Calculator,
-    ir: ir::Session<'a>,
     f: CarStateFactory,
     last: CarState,
     lap_start: CarState,
 }
-impl<'a> CalcState<'a> {
-    fn new(session: ir::Session<'a>) -> Result<CalcState<'a>, ir::Error> {
-        let mut session_info;
-        unsafe {
-            session_info = match session.session_info() {
-                Ok(s) => SessionInfo::parse(&s, 0),
-                Err(e) => return Err(ir::Error::SessionExpired),
-            };
-        }
+impl CalcState {
+    fn new(session: ir::Session) -> Result<CalcState, ir::Error> {
+        let session_info = SessionInfo::parse(unsafe { &session.session_info() }, 0);
         let cfg = RaceConfig {
             fuel_tank_size: (session_info.driver_car_fuel_max_ltr
                 * session_info.driver_car_max_fuel_pct) as f32,
@@ -104,23 +108,30 @@ impl<'a> CalcState<'a> {
             db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
         };
         let calc = Calculator::new(cfg).unwrap();
-        let mut f = CarStateFactory::new(&session)?;
+        let f = CarStateFactory::new(&session);
         let last = f.read(&session)?;
         Ok(CalcState {
             calc,
-            ir: session,
             f,
+            ir: session,
             last,
             lap_start: last,
         })
     }
-    fn read(&self) -> Result<CarState, ir::Error> {
+    fn read(&mut self) -> Result<CarState, ir::Error> {
         self.f.read(&self.ir)
     }
-    fn update(&mut self, result: &mut State) -> Result<(), ir::Error> {
+    fn update(&mut self, result: &mut State) -> Result<(), CalcError> {
+        unsafe {
+            if self.ir.get_new_data() == DataUpdateResult::SessionExpired {
+                return Err(CalcError::SessionExpired);
+            }
+        };
         let this = self.read()?;
         if this.session_time < self.last.session_time {
             // reset
+            // TODO, will we hit this with the tick check in Session?
+            println!("session time went backwards");
             self.calc.save_laps().unwrap(); //TODO
             self.last = this;
             self.lap_start = this;
@@ -193,26 +204,20 @@ impl<'a> CalcState<'a> {
         Ok(())
     }
 }
-impl<'a> Drop for CalcState<'a> {
+impl Drop for CalcState {
     fn drop(&mut self) {
         self.calc.save_laps().unwrap(); //TODO
     }
 }
-impl<'a> IrCalc<'a> {
-    pub fn new() -> IrCalc<'a> {
+impl IrCalc {
+    pub fn new() -> IrCalc {
         IrCalc {
-            client: unsafe { ir::Client::new() },
+            client: ir::Client::new(),
             state: None,
         }
     }
     pub fn update(&mut self, result: &mut State) {
         unsafe {
-            if self.state.is_some() {
-                if self.state.unwrap().ir.expired() {
-                    *result = State::default();
-                    self.state = None
-                }
-            }
             if self.state.is_none() {
                 match self.client.session() {
                     None => {
@@ -220,7 +225,7 @@ impl<'a> IrCalc<'a> {
                         return;
                     }
                     Some(session) => match CalcState::new(session) {
-                        Err(e) => {
+                        Err(_) => {
                             *result = State::default();
                             return;
                         }
@@ -235,7 +240,7 @@ impl<'a> IrCalc<'a> {
         if let Some(cs) = &mut self.state {
             match cs.update(result) {
                 Ok(_) => {}
-                Err(ir::Error::SessionExpired) => {
+                Err(CalcError::SessionExpired) => {
                     *result = State::default();
                     self.state = None;
                 }
@@ -369,45 +374,45 @@ struct CarStateFactory {
     lap_progress: ir::Var,
 }
 impl CarStateFactory {
-    fn new(c: &ir::Session) -> Result<CarStateFactory, ir::VariableError> {
+    fn new(c: &ir::Session) -> CarStateFactory {
         unsafe {
-            Ok(CarStateFactory {
-                session_num: c.find_var("SessionNum")?,
-                session_time: c.find_var("SessionTime")?,
-                is_on_track: c.find_var("IsOnTrack")?,
-                player_track_surface: c.find_var("PlayerTrackSurface")?,
-                session_state: c.find_var("SessionState")?,
-                session_flags: c.find_var("SessionFlags")?,
-                session_time_remain: c.find_var("SessionTimeRemain")?,
-                session_laps_remain: c.find_var("SessionLapsRemainEx")?,
-                session_time_total: c.find_var("SessionTimeTotal")?,
-                session_laps_total: c.find_var("SessionLapsTotal")?,
-                lap: c.find_var("Lap")?,
-                lap_completed: c.find_var("LapCompleted")?,
-                race_laps: c.find_var("RaceLaps")?,
-                fuel_level: c.find_var("FuelLevel")?,
-                lap_progress: c.find_var("LapDistPct")?,
-            })
+            CarStateFactory {
+                session_num: c.find_var("SessionNum").unwrap(),
+                session_time: c.find_var("SessionTime").unwrap(),
+                is_on_track: c.find_var("IsOnTrack").unwrap(),
+                player_track_surface: c.find_var("PlayerTrackSurface").unwrap(),
+                session_state: c.find_var("SessionState").unwrap(),
+                session_flags: c.find_var("SessionFlags").unwrap(),
+                session_time_remain: c.find_var("SessionTimeRemain").unwrap(),
+                session_laps_remain: c.find_var("SessionLapsRemainEx").unwrap(),
+                session_time_total: c.find_var("SessionTimeTotal").unwrap(),
+                session_laps_total: c.find_var("SessionLapsTotal").unwrap(),
+                lap: c.find_var("Lap").unwrap(),
+                lap_completed: c.find_var("LapCompleted").unwrap(),
+                race_laps: c.find_var("RaceLaps").unwrap(),
+                fuel_level: c.find_var("FuelLevel").unwrap(),
+                lap_progress: c.find_var("LapDistPct").unwrap(),
+            }
         }
     }
-    fn read(&mut self, c: &ir::Session) -> Result<CarState, ir::Error> {
+    fn read(&self, c: &ir::Session) -> Result<CarState, ir::Error> {
         unsafe {
             Ok(CarState {
-                session_num: c.value(&mut self.session_num)?,
-                session_time: c.value(&mut self.session_time)?,
-                is_on_track: c.value(&mut self.is_on_track)?,
-                player_track_surface: c.value(&mut self.player_track_surface)?,
-                session_state: c.value(&mut self.session_state)?,
-                session_flags: c.value(&mut self.session_flags)?,
-                session_time_remain: c.value(&mut self.session_time_remain)?,
-                session_laps_remain: c.value(&mut self.session_laps_remain)?,
-                session_time_total: c.value(&mut self.session_time_total)?,
-                session_laps_total: c.value(&mut self.session_laps_total)?,
-                lap: c.value(&mut self.lap)?,
-                lap_completed: c.value(&mut self.lap_completed)?,
-                race_laps: c.value(&mut self.race_laps)?,
-                fuel_level: c.value(&mut self.fuel_level)?,
-                lap_progress: c.value(&mut self.lap_progress)?,
+                session_num: c.value(&self.session_num)?,
+                session_time: c.value(&self.session_time)?,
+                is_on_track: c.value(&self.is_on_track)?,
+                player_track_surface: c.value(&self.player_track_surface)?,
+                session_state: c.value(&self.session_state)?,
+                session_flags: c.value(&self.session_flags)?,
+                session_time_remain: c.value(&self.session_time_remain)?,
+                session_laps_remain: c.value(&self.session_laps_remain)?,
+                session_time_total: c.value(&self.session_time_total)?,
+                session_laps_total: c.value(&self.session_laps_total)?,
+                lap: c.value(&self.lap)?,
+                lap_completed: c.value(&self.lap_completed)?,
+                race_laps: c.value(&self.race_laps)?,
+                fuel_level: c.value(&self.fuel_level)?,
+                lap_progress: c.value(&self.lap_progress)?,
             })
         }
     }

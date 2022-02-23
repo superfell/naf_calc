@@ -86,7 +86,7 @@ fn build_root_widget() -> impl Widget<State> {
     let mut calc = ircalc::IrCalc::new();
 
     TimerWidget {
-        on_fire: move |d: &mut State| calc.update(d),
+        on_fire: move |d| calc.update(d),
         timer_id: TimerToken::INVALID,
         widget: Flex::row()
             .must_fill_main_axis(true)
