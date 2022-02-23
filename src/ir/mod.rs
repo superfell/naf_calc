@@ -25,251 +25,53 @@ const IRSDK_MAX_DESC: usize = 64;
 pub const IRSDK_UNLIMITED_LAPS: i32 = 32767;
 pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
 
-#[derive(Debug)]
-pub enum Error {
-    InvalidType,
-    InvalidEnumValue(i32),
+pub struct Client {
+    conn: Option<Rc<Box<Connection>>>,
+    session_id: i32, // incremented each time we issue a new session. Allows for session to determine its expired even if
+                     // iRacing started a new session
 }
-
-pub trait FromValue: Sized {
-    /// Converts an iracing Value into Rust value.
-    fn var_result(value: &Value) -> Result<Self, Error>;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum VarType {
-    // 1 byte
-    Char = 0,
-    Bool = 1,
-
-    // 4 bytes
-    Int = 2,
-    Bitfield = 3,
-    Float = 4,
-
-    // 8 bytes
-    Double = 5,
-
-    //index, don't use
-    #[deprecated]
-    Etcount = 6,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Value<'a> {
-    Char(u8),
-    Chars(&'a [u8]),
-    Bool(bool),
-    Bools(&'a [bool]),
-    Int(i32),
-    Ints(&'a [i32]),
-    Bitfield(i32),
-    Bitfields(&'a [i32]),
-    Float(f32),
-    Floats(&'a [f32]),
-    Double(f64),
-    Doubles(&'a [f64]),
-}
-
-#[repr(C)]
-struct IrsdkBuf {
-    tick_count: i32, // used to detect changes in data
-    buf_offset: i32, // offset from header
-    pad: [i32; 2],   // (16 byte align)
-}
-
-#[repr(C)]
-struct IrsdkHeader {
-    ver: i32,                   // this api header version, see IRSDK_VER
-    status: flags::StatusField, // bitfield using irsdk_StatusField
-    tick_rate: i32,             // ticks per second (60 or 360 etc)
-
-    // session information, updated periodicaly
-    session_info_update: i32, // Incremented when session info changes
-    session_info_len: i32,    // Length in bytes of session info string
-    session_info_offset: i32, // Session info, encoded in YAML format
-
-    // State data, output at tickRate
-    num_vars: i32,          // length of array pointed to by varHeaderOffset
-    var_header_offset: i32, // offset to irsdk_varHeader[numVars] array, Describes the variables received in varBuf
-
-    num_buf: i32,                        // <= IRSDK_MAX_BUFS (3 for now)
-    buf_len: i32,                        // length in bytes for one line
-    pad1: [i32; 2],                      // (16 byte align)
-    var_buf: [IrsdkBuf; IRSDK_MAX_BUFS], // buffers of data being written to
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct IrsdkVarHeader {
-    var_type: VarType, // irsdk_VarType
-    offset: i32,       // offset fron start of buffer row
-    count: i32, // number of entrys (array) so length in bytes would be irsdk_VarTypeBytes[type] * count
-
-    count_as_time: u8,
-    pad: [i8; 3], // (16 byte align)
-
-    name: [u8; IRSDK_MAX_STRING],
-    desc: [u8; IRSDK_MAX_DESC],
-    unit: [u8; IRSDK_MAX_STRING], // something like "kg/m^2"
-}
-#[allow(dead_code)]
-impl IrsdkVarHeader {
-    fn name(&self) -> Result<&str, std::str::Utf8Error> {
-        unsafe { CStr::from_ptr(self.name.as_ptr() as *const c_char).to_str() }
-    }
-    fn desc(&self) -> Result<&str, std::str::Utf8Error> {
-        unsafe { CStr::from_ptr(self.desc.as_ptr() as *const c_char).to_str() }
-    }
-    fn unit(&self) -> Result<&str, std::str::Utf8Error> {
-        unsafe { CStr::from_ptr(self.unit.as_ptr() as *const c_char).to_str() }
-    }
-    fn has_name(&self, n: &str) -> bool {
-        if n.len() > IRSDK_MAX_STRING {
-            return false;
+impl Client {
+    pub fn new() -> Client {
+        Client {
+            conn: None,
+            session_id: 0,
         }
-        let b = n.as_bytes();
-        for (i, item) in b.iter().enumerate() {
-            if *item != self.name[i] {
-                return false;
+    }
+    // attempts to connect to iracing if we're not already. returns true if we're now connected (or was already connected), false otherwise
+    unsafe fn connect(&mut self) -> bool {
+        match &self.conn {
+            Some(c) => c.connected(),
+            None => match Connection::new() {
+                Ok(c) => {
+                    let result = c.connected();
+                    self.conn = Some(Rc::new(Box::new(c)));
+                    result
+                }
+                Err(_) => false,
+            },
+        }
+    }
+    pub unsafe fn session(&mut self) -> Option<Session> {
+        if !self.connect() {
+            None
+        } else {
+            let sid = self.session_id;
+            self.session_id += 1;
+            let mut s = Session {
+                session_id: sid,
+                conn: self.conn.as_ref().unwrap().clone(),
+                last_tick_count: 0,
+                data: bytes::BytesMut::new(),
+                expired: false,
+            };
+            if DataUpdateResult::Updated == s.get_new_data() {
+                Some(s)
+            } else {
+                None
             }
         }
-        for i in b.len()..IRSDK_MAX_STRING {
-            if self.name[i] != 0 {
-                return false;
-            }
-        }
-        true
     }
-}
-
-pub struct Var {
-    hdr: IrsdkVarHeader,
-    session_id: i32,
-}
-#[allow(dead_code)]
-impl Var {
-    pub fn var_type(&self) -> VarType {
-        self.hdr.var_type
-    }
-    pub fn name(&self) -> &str {
-        self.hdr.name().unwrap()
-    }
-    pub fn desc(&self) -> &str {
-        self.hdr.desc().unwrap()
-    }
-    pub fn unit(&self) -> &str {
-        self.hdr.unit().unwrap()
-    }
-    pub fn count(&self) -> usize {
-        self.hdr.count as usize
-    }
-}
-impl fmt::Debug for Var {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {:?} ({})", self.name(), self.var_type(), self.desc())
-    }
-}
-
-#[derive(Debug)]
-struct Connection {
-    file_mapping: HANDLE,
-    shared_mem: *mut c_void,
-    header: *mut IrsdkHeader,
-    new_data: HANDLE,
-}
-impl Connection {
-    // This will return an error if iRacing is not running.
-    // However once you have a Connection it will remain usable even if iracing is exited and started again.
-    unsafe fn new() -> Result<Self, WIN32_ERROR> {
-        let file_mapping =
-            Memory::OpenFileMappingA(Memory::FILE_MAP_READ.0, false, "Local\\IRSDKMemMapFileName");
-        if file_mapping.is_invalid() {
-            return Err(GetLastError());
-        }
-        let shared_mem = Memory::MapViewOfFile(file_mapping, Memory::FILE_MAP_READ, 0, 0, 0);
-        if shared_mem.is_null() {
-            let e = Err(GetLastError());
-            CloseHandle(file_mapping);
-            return e;
-        }
-        let new_data = Threading::OpenEventA(
-            windows::Win32::Storage::FileSystem::SYNCHRONIZE.0,
-            false,
-            "Local\\IRSDKDataValidEvent",
-        );
-        if new_data.is_invalid() {
-            let e = Err(GetLastError());
-            Memory::UnmapViewOfFile(shared_mem);
-            CloseHandle(file_mapping);
-            return e;
-        }
-        let header = shared_mem as *mut IrsdkHeader;
-        Ok(Connection {
-            file_mapping,
-            shared_mem,
-            header,
-            new_data,
-        })
-    }
-    unsafe fn connected(&self) -> bool {
-        (*self.header)
-            .status
-            .intersects(flags::StatusField::CONNECTED)
-    }
-    unsafe fn variables(&self) -> &[IrsdkVarHeader] {
-        let vhbase = self
-            .shared_mem
-            .add((*self.header).var_header_offset as usize)
-            as *const IrsdkVarHeader;
-        slice::from_raw_parts(vhbase, (*self.header).num_vars as usize)
-    }
-    unsafe fn buffers(&self) -> &[IrsdkBuf] {
-        let l = (*self.header).num_buf as usize;
-        assert!(l <= IRSDK_MAX_BUFS);
-        &(*self.header).var_buf[..l]
-    }
-    // returns the telemetry buffer with the highest tick count, along with the actual data
-    // this is the buffer in the shared mem, so you should copy it.
-    unsafe fn lastest(&self) -> (&IrsdkBuf, &[u8]) {
-        let b = self.buffers();
-        let mut latest = &b[0];
-        for buff in b {
-            if buff.tick_count > latest.tick_count {
-                latest = buff;
-            }
-        }
-        let buf_len = (*self.header).buf_len as usize;
-        let src = self.shared_mem.add(latest.buf_offset as usize);
-        return (latest, slice::from_raw_parts(src as *const u8, buf_len));
-    }
-    unsafe fn wait_for_new_data(&self, wait: Duration) {
-        Threading::WaitForSingleObject(self.new_data, wait.as_millis().try_into().unwrap());
-    }
-    unsafe fn session_info(&self) -> &[u8] {
-        let p = self
-            .shared_mem
-            .add((*self.header).session_info_offset as usize) as *const u8;
-        let mut bytes = std::slice::from_raw_parts(p, (*self.header).session_info_len as usize);
-        // session_info_len is the size of the buffer, not necessarily the size of the string
-        // so we have to look for the null terminatior.
-        for i in 0..bytes.len() {
-            if bytes[i] == 0 {
-                bytes = &bytes[0..i];
-                break;
-            }
-        }
-        bytes
-    }
-}
-impl Drop for Connection {
-    fn drop(&mut self) {
-        unsafe {
-            CloseHandle(self.new_data);
-            Memory::UnmapViewOfFile(self.shared_mem);
-            windows::Win32::Foundation::CloseHandle(self.file_mapping);
-        }
-    }
+    // TODO wait_for_session()
 }
 
 #[derive(Debug, PartialEq)]
@@ -405,53 +207,248 @@ impl Session {
     }
 }
 
-pub struct Client {
-    conn: Option<Rc<Box<Connection>>>,
-    session_id: i32, // incremented each time we issue a new session. Allows for session to determine its expired even if
-                     // iRacing started a new session
+pub struct Var {
+    hdr: IrsdkVarHeader,
+    session_id: i32,
 }
-impl Client {
-    pub fn new() -> Client {
-        Client {
-            conn: None,
-            session_id: 0,
-        }
+impl Var {
+    pub fn var_type(&self) -> VarType {
+        self.hdr.var_type
     }
-    // attempts to connect to iracing if we're not already. returns true if we're now connected (or was already connected), false otherwise
-    unsafe fn connect(&mut self) -> bool {
-        match &self.conn {
-            Some(c) => c.connected(),
-            None => match Connection::new() {
-                Ok(c) => {
-                    let result = c.connected();
-                    self.conn = Some(Rc::new(Box::new(c)));
-                    result
-                }
-                Err(_) => false,
-            },
-        }
+    pub fn name(&self) -> &str {
+        self.hdr.name().unwrap()
     }
-    pub unsafe fn session(&mut self) -> Option<Session> {
-        if !self.connect() {
-            None
-        } else {
-            let sid = self.session_id;
-            self.session_id += 1;
-            let mut s = Session {
-                session_id: sid,
-                conn: self.conn.as_ref().unwrap().clone(),
-                last_tick_count: 0,
-                data: bytes::BytesMut::new(),
-                expired: false,
-            };
-            if DataUpdateResult::Updated == s.get_new_data() {
-                Some(s)
-            } else {
-                None
+    pub fn desc(&self) -> &str {
+        self.hdr.desc().unwrap()
+    }
+    pub fn unit(&self) -> &str {
+        self.hdr.unit().unwrap()
+    }
+    pub fn count(&self) -> usize {
+        self.hdr.count as usize
+    }
+}
+impl fmt::Debug for Var {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {:?} ({})", self.name(), self.var_type(), self.desc())
+    }
+}
+
+#[derive(Debug)]
+struct Connection {
+    file_mapping: HANDLE,
+    shared_mem: *mut c_void,
+    header: *mut IrsdkHeader,
+    new_data: HANDLE,
+}
+impl Connection {
+    // This will return an error if iRacing is not running.
+    // However once you have a Connection it will remain usable even if iracing is exited and started again.
+    unsafe fn new() -> Result<Self, WIN32_ERROR> {
+        let file_mapping =
+            Memory::OpenFileMappingA(Memory::FILE_MAP_READ.0, false, "Local\\IRSDKMemMapFileName");
+        if file_mapping.is_invalid() {
+            return Err(GetLastError());
+        }
+        let shared_mem = Memory::MapViewOfFile(file_mapping, Memory::FILE_MAP_READ, 0, 0, 0);
+        if shared_mem.is_null() {
+            let e = Err(GetLastError());
+            CloseHandle(file_mapping);
+            return e;
+        }
+        let new_data = Threading::OpenEventA(
+            windows::Win32::Storage::FileSystem::SYNCHRONIZE.0,
+            false,
+            "Local\\IRSDKDataValidEvent",
+        );
+        if new_data.is_invalid() {
+            let e = Err(GetLastError());
+            Memory::UnmapViewOfFile(shared_mem);
+            CloseHandle(file_mapping);
+            return e;
+        }
+        let header = shared_mem as *mut IrsdkHeader;
+        Ok(Connection {
+            file_mapping,
+            shared_mem,
+            header,
+            new_data,
+        })
+    }
+    unsafe fn connected(&self) -> bool {
+        (*self.header)
+            .status
+            .intersects(flags::StatusField::CONNECTED)
+    }
+    unsafe fn variables(&self) -> &[IrsdkVarHeader] {
+        let vhbase = self
+            .shared_mem
+            .add((*self.header).var_header_offset as usize)
+            as *const IrsdkVarHeader;
+        slice::from_raw_parts(vhbase, (*self.header).num_vars as usize)
+    }
+    unsafe fn buffers(&self) -> &[IrsdkBuf] {
+        let l = (*self.header).num_buf as usize;
+        assert!(l <= IRSDK_MAX_BUFS);
+        &(*self.header).var_buf[..l]
+    }
+    // returns the telemetry buffer with the highest tick count, along with the actual data
+    // this is the buffer in the shared mem, so you should copy it.
+    unsafe fn lastest(&self) -> (&IrsdkBuf, &[u8]) {
+        let b = self.buffers();
+        let mut latest = &b[0];
+        for buff in b {
+            if buff.tick_count > latest.tick_count {
+                latest = buff;
             }
         }
+        let buf_len = (*self.header).buf_len as usize;
+        let src = self.shared_mem.add(latest.buf_offset as usize);
+        return (latest, slice::from_raw_parts(src as *const u8, buf_len));
     }
-    // TODO wait_for_session()
+    unsafe fn wait_for_new_data(&self, wait: Duration) {
+        Threading::WaitForSingleObject(self.new_data, wait.as_millis().try_into().unwrap());
+    }
+    unsafe fn session_info(&self) -> &[u8] {
+        let p = self
+            .shared_mem
+            .add((*self.header).session_info_offset as usize) as *const u8;
+        let mut bytes = std::slice::from_raw_parts(p, (*self.header).session_info_len as usize);
+        // session_info_len is the size of the buffer, not necessarily the size of the string
+        // so we have to look for the null terminatior.
+        for i in 0..bytes.len() {
+            if bytes[i] == 0 {
+                bytes = &bytes[0..i];
+                break;
+            }
+        }
+        bytes
+    }
+}
+impl Drop for Connection {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.new_data);
+            Memory::UnmapViewOfFile(self.shared_mem);
+            windows::Win32::Foundation::CloseHandle(self.file_mapping);
+        }
+    }
+}
+#[repr(C)]
+struct IrsdkBuf {
+    tick_count: i32, // used to detect changes in data
+    buf_offset: i32, // offset from header
+    pad: [i32; 2],   // (16 byte align)
+}
+
+#[repr(C)]
+struct IrsdkHeader {
+    ver: i32,                   // this api header version, see IRSDK_VER
+    status: flags::StatusField, // bitfield using irsdk_StatusField
+    tick_rate: i32,             // ticks per second (60 or 360 etc)
+
+    // session information, updated periodicaly
+    session_info_update: i32, // Incremented when session info changes
+    session_info_len: i32,    // Length in bytes of session info string
+    session_info_offset: i32, // Session info, encoded in YAML format
+
+    // State data, output at tickRate
+    num_vars: i32,          // length of array pointed to by varHeaderOffset
+    var_header_offset: i32, // offset to irsdk_varHeader[numVars] array, Describes the variables received in varBuf
+
+    num_buf: i32,                        // <= IRSDK_MAX_BUFS (3 for now)
+    buf_len: i32,                        // length in bytes for one line
+    pad1: [i32; 2],                      // (16 byte align)
+    var_buf: [IrsdkBuf; IRSDK_MAX_BUFS], // buffers of data being written to
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct IrsdkVarHeader {
+    var_type: VarType, // irsdk_VarType
+    offset: i32,       // offset fron start of buffer row
+    count: i32, // number of entrys (array) so length in bytes would be irsdk_VarTypeBytes[type] * count
+
+    count_as_time: u8,
+    pad: [i8; 3], // (16 byte align)
+
+    name: [u8; IRSDK_MAX_STRING],
+    desc: [u8; IRSDK_MAX_DESC],
+    unit: [u8; IRSDK_MAX_STRING], // something like "kg/m^2"
+}
+impl IrsdkVarHeader {
+    fn name(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.name.as_ptr() as *const c_char).to_str() }
+    }
+    fn desc(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.desc.as_ptr() as *const c_char).to_str() }
+    }
+    fn unit(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.unit.as_ptr() as *const c_char).to_str() }
+    }
+    fn has_name(&self, n: &str) -> bool {
+        if n.len() > IRSDK_MAX_STRING {
+            return false;
+        }
+        let b = n.as_bytes();
+        for (i, item) in b.iter().enumerate() {
+            if *item != self.name[i] {
+                return false;
+            }
+        }
+        for i in b.len()..IRSDK_MAX_STRING {
+            if self.name[i] != 0 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    InvalidType,
+    InvalidEnumValue(i32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VarType {
+    // 1 byte
+    Char = 0,
+    Bool = 1,
+
+    // 4 bytes
+    Int = 2,
+    Bitfield = 3,
+    Float = 4,
+
+    // 8 bytes
+    Double = 5,
+
+    //index, don't use
+    #[deprecated]
+    Etcount = 6,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Value<'a> {
+    Char(u8),
+    Chars(&'a [u8]),
+    Bool(bool),
+    Bools(&'a [bool]),
+    Int(i32),
+    Ints(&'a [i32]),
+    Bitfield(i32),
+    Bitfields(&'a [i32]),
+    Float(f32),
+    Floats(&'a [f32]),
+    Double(f64),
+    Doubles(&'a [f64]),
+}
+
+pub trait FromValue: Sized {
+    /// Converts an iracing Value into Rust value.
+    fn var_result(value: &Value) -> Result<Self, Error>;
 }
 
 impl<'a> Value<'a> {
