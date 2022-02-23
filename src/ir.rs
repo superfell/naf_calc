@@ -12,9 +12,9 @@ use bitflags::bitflags;
 use num_derive::FromPrimitive;
 use std::ptr;
 use std::slice;
+use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WIN32_ERROR};
 use windows::Win32::System::Memory;
 use windows::Win32::System::Threading;
-use windows::Win32::System::Threading::WaitForSingleObject;
 
 use encoding::all::WINDOWS_1252;
 use encoding::{DecoderTrap, Encoding};
@@ -31,7 +31,8 @@ pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
 #[derive(Debug)]
 pub enum Error {
     InvalidType,
-    InvalidEnumValue,
+    InvalidEnumValue(i32),
+    Win32(WIN32_ERROR),
 }
 
 pub trait FromValue: Sized {
@@ -117,7 +118,7 @@ impl FromValue for TrackLocation {
         let v = value.as_i32()?;
         match num::FromPrimitive::from_i32(v) {
             Some(t) => Ok(t),
-            None => Err(Error::InvalidEnumValue),
+            None => Err(Error::InvalidEnumValue(v)),
         }
     }
 }
@@ -161,7 +162,7 @@ impl FromValue for TrackSurface {
         let v = value.as_i32()?;
         match num::FromPrimitive::from_i32(v) {
             Some(t) => Ok(t),
-            None => Err(Error::InvalidEnumValue),
+            None => Err(Error::InvalidEnumValue(v)),
         }
     }
 }
@@ -181,7 +182,7 @@ impl FromValue for SessionState {
         let v = value.as_i32()?;
         match num::FromPrimitive::from_i32(v) {
             Some(t) => Ok(t),
-            None => Err(Error::InvalidEnumValue),
+            None => Err(Error::InvalidEnumValue(v)),
         }
     }
 }
@@ -202,7 +203,7 @@ impl FromValue for CarLeftRight {
         let v = value.as_i32()?;
         match num::FromPrimitive::from_i32(v) {
             Some(t) => Ok(t),
-            None => Err(Error::InvalidEnumValue),
+            None => Err(Error::InvalidEnumValue(v)),
         }
     }
 }
@@ -268,7 +269,7 @@ impl FromValue for PitSvcStatus {
         let v = value.as_i32()?;
         match num::FromPrimitive::from_i32(v) {
             Some(t) => Ok(t),
-            None => Err(Error::InvalidEnumValue),
+            None => Err(Error::InvalidEnumValue(v)),
         }
     }
 }
@@ -286,7 +287,7 @@ impl FromValue for PaceMode {
         let v = value.as_i32()?;
         match num::FromPrimitive::from_i32(v) {
             Some(t) => Ok(t),
-            None => Err(Error::InvalidEnumValue),
+            None => Err(Error::InvalidEnumValue(v)),
         }
     }
 }
@@ -373,8 +374,8 @@ struct IrsdkHeader {
 struct IrsdkVarHeader {
     var_type: VarType, // irsdk_VarType
     offset: i32,       // offset fron start of buffer row
-    count: i32,        // number of entrys (array)
-    // so length in bytes would be irsdk_VarTypeBytes[type] * count
+    count: i32, // number of entrys (array) so length in bytes would be irsdk_VarTypeBytes[type] * count
+
     count_as_time: u8,
     pad: [i8; 3], // (16 byte align)
 
@@ -438,130 +439,148 @@ impl fmt::Debug for Var {
         write!(f, "{} ({}) {:?}", self.name(), self.desc(), self.var_type())
     }
 }
-pub struct Client {
-    file_mapping: windows::Win32::Foundation::HANDLE,
+struct Connection {
+    file_mapping: HANDLE,
     shared_mem: *mut c_void,
-    header: Option<*mut IrsdkHeader>,
+    header: *mut IrsdkHeader,
+    new_data: HANDLE,
+}
+impl Connection {
+    // This will return an error if iRacing is not running.
+    // However once you have a Connection it will remain usable even if iracing is exited and started again.
+    unsafe fn new() -> Result<Self, Error> {
+        let file_mapping =
+            Memory::OpenFileMappingA(Memory::FILE_MAP_READ.0, false, "Local\\IRSDKMemMapFileName");
+        if file_mapping.is_invalid() {
+            return Err(Error::Win32(GetLastError()));
+        }
+        let shared_mem = Memory::MapViewOfFile(file_mapping, Memory::FILE_MAP_READ, 0, 0, 0);
+        if shared_mem.is_null() {
+            let e = Err(Error::Win32(GetLastError()));
+            CloseHandle(file_mapping);
+            return e;
+        }
+        let new_data = Threading::OpenEventA(
+            windows::Win32::Storage::FileSystem::SYNCHRONIZE.0,
+            false,
+            "Local\\IRSDKDataValidEvent",
+        );
+        if new_data.is_invalid() {
+            let e = Err(Error::Win32(GetLastError()));
+            Memory::UnmapViewOfFile(shared_mem);
+            CloseHandle(file_mapping);
+            return e;
+        }
+        let header = shared_mem as *mut IrsdkHeader;
+        Ok(Connection {
+            file_mapping,
+            shared_mem,
+            header,
+            new_data,
+        })
+    }
+    unsafe fn connected(&self) -> bool {
+        (*self.header).status.intersects(StatusField::CONNECTED)
+    }
+}
+impl Drop for Connection {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.new_data);
+            Memory::UnmapViewOfFile(self.shared_mem);
+            windows::Win32::Foundation::CloseHandle(self.file_mapping);
+        }
+    }
+}
 
-    new_data: windows::Win32::Foundation::HANDLE,
-
+pub struct Client {
+    conn: Option<Connection>,
     last_tick_count: i32,
     data: bytes::BytesMut,
 }
-#[allow(dead_code)]
 impl Client {
-    pub fn new() -> Self {
+    pub unsafe fn new() -> Client {
         Client {
-            file_mapping: windows::Win32::Foundation::INVALID_HANDLE_VALUE,
-            shared_mem: std::ptr::null_mut(),
-            header: None,
-            new_data: windows::Win32::Foundation::INVALID_HANDLE_VALUE,
+            conn: Connection::new().ok(),
             last_tick_count: 0,
-            data: bytes::BytesMut::with_capacity(1024),
+            data: bytes::BytesMut::new(),
         }
     }
-    pub fn startup(&mut self) -> bool {
-        if self.file_mapping.is_invalid() {
-            self.last_tick_count = 0;
-            unsafe {
-                self.file_mapping = Memory::OpenFileMappingA(
-                    Memory::FILE_MAP_READ.0,
-                    false,
-                    "Local\\IRSDKMemMapFileName",
-                );
-                if !self.file_mapping.is_invalid() {
-                    self.shared_mem =
-                        Memory::MapViewOfFile(self.file_mapping, Memory::FILE_MAP_READ, 0, 0, 0);
-                    if !self.shared_mem.is_null() {
-                        self.header = Some(self.shared_mem as *mut IrsdkHeader);
-                        self.new_data = Threading::OpenEventA(
-                            windows::Win32::Storage::FileSystem::SYNCHRONIZE.0,
-                            false,
-                            "Local\\IRSDKDataValidEvent",
-                        );
-                    }
+    // attempts to connect to iracing if we're not already. returns true if we're now connected (or was already connected), false otherwise
+    unsafe fn connect(&mut self) -> bool {
+        match &self.conn {
+            Some(c) => c.connected(),
+            None => match Connection::new() {
+                Ok(c) => {
+                    let result = c.connected();
+                    self.conn = Some(c);
+                    result
                 }
-            }
-        }
-        !self.file_mapping.is_invalid() && !self.shared_mem.is_null() && !self.new_data.is_invalid()
-    }
-    pub fn close(&mut self) {
-        unsafe {
-            if !self.new_data.is_invalid() {
-                windows::Win32::Foundation::CloseHandle(self.new_data);
-                self.new_data = windows::Win32::Foundation::INVALID_HANDLE_VALUE;
-            }
-            if !self.shared_mem.is_null() {
-                self.header = None;
-                Memory::UnmapViewOfFile(self.shared_mem);
-                self.shared_mem = std::ptr::null_mut();
-            }
-            if !self.file_mapping.is_invalid() {
-                windows::Win32::Foundation::CloseHandle(self.file_mapping);
-                self.file_mapping = windows::Win32::Foundation::INVALID_HANDLE_VALUE;
-            }
+                Err(_) => false,
+            },
         }
     }
-    pub fn connected(&self) -> bool {
-        unsafe {
-            match self.header {
-                None => false,
-                Some(h) => (*h).status & StatusField::CONNECTED == StatusField::CONNECTED,
-            }
+    pub unsafe fn connected(&self) -> bool {
+        match &self.conn {
+            Some(c) => c.connected(),
+            None => false,
         }
     }
-    pub fn wait_for_data(&mut self, wait: std::time::Duration) -> bool {
-        if self.get_new_data() {
-            return true;
-        }
-        unsafe {
-            WaitForSingleObject(self.new_data, wait.as_millis().try_into().unwrap());
-        }
-        self.get_new_data()
-    }
-    pub fn get_new_data(&mut self) -> bool {
-        if !self.startup() {
+    pub unsafe fn wait_for_data(&mut self, wait: std::time::Duration) -> bool {
+        if !self.get_new_data() {
             return false;
         }
-        unsafe {
-            if let Some(h) = self.header {
-                if !(*h).status.intersects(StatusField::CONNECTED) {
-                    self.last_tick_count = 0;
-                    return false;
-                }
+        match &self.conn {
+            Some(c) => {
+                Threading::WaitForSingleObject(c.new_data, wait.as_millis().try_into().unwrap());
+                self.get_new_data()
+            }
+            None => unreachable!("you shouldn't be able to get here"),
+        }
+    }
+    pub unsafe fn get_new_data(&mut self) -> bool {
+        if !self.connect() {
+            self.last_tick_count = 0;
+            return false;
+        }
+        match &self.conn {
+            None => {
+                unreachable!("You shouldn't be able to get here");
+            }
+            Some(c) => {
                 let mut latest: usize = 0;
-                for i in 1..((*h).num_buf as usize) {
-                    if (*h).var_buf[latest].tick_count < (*h).var_buf[i].tick_count {
+                for i in 1..((*c.header).num_buf as usize) {
+                    if (*c.header).var_buf[latest].tick_count < (*c.header).var_buf[i].tick_count {
                         latest = i;
                     }
                 }
-                let buf_len = (*h).buf_len as usize;
-                let b = &(*h).var_buf[latest];
+                let buf_len = (*c.header).buf_len as usize;
+                let b = &(*c.header).var_buf[latest];
                 if self.last_tick_count < b.tick_count {
                     if self.data.capacity() < buf_len {
                         self.data.reserve(buf_len)
                     }
                     for _tries in 0..2 {
                         let curr_tick_count = b.tick_count;
-                        let src = self.shared_mem.add(b.buf_offset as usize);
+                        let src = c.shared_mem.add(b.buf_offset as usize);
                         ptr::copy_nonoverlapping(src.cast(), self.data.as_mut_ptr(), buf_len);
                         if curr_tick_count == b.tick_count {
                             self.last_tick_count = curr_tick_count;
                             return true;
                         }
                     }
-                }
+                };
             }
         }
         false
     }
-    pub fn dump_vars(&self) {
-        match self.header {
+    pub unsafe fn dump_vars(&self) {
+        match &self.conn {
             None => {}
-            Some(h) => unsafe {
-                let vhbase =
-                    self.shared_mem.add((*h).var_header_offset as usize) as *const IrsdkVarHeader;
-                for i in 0..(*h).num_vars {
+            Some(c) => {
+                let vhbase = c.shared_mem.add((*c.header).var_header_offset as usize)
+                    as *const IrsdkVarHeader;
+                for i in 0..(*c.header).num_vars {
                     let vh = vhbase.add(i as usize);
                     let var = Var { hdr: *vh };
                     let value = self.var_value(&var);
@@ -575,69 +594,61 @@ impl Client {
                         value,
                     );
                 }
-            },
-        }
-    }
-    pub fn find_var(&self, name: &str) -> Option<Var> {
-        match self.header {
-            None => None,
-            Some(h) => {
-                unsafe {
-                    let vhbase = self.shared_mem.add((*h).var_header_offset as usize)
-                        as *const IrsdkVarHeader;
-                    for i in 0..(*h).num_vars as usize {
-                        let vh = vhbase.add(i);
-                        if (*vh).has_name(name) {
-                            return Some(Var { hdr: *vh });
-                        }
-                    }
-                }
-                None
             }
         }
     }
-    pub fn var_value(&self, var: &Var) -> Value {
-        unsafe {
-            let x = self.data.as_ptr().add(var.hdr.offset as usize);
-            if var.hdr.count == 1 {
-                match var.hdr.var_type {
-                    VarType::Char => Value::Char(*x),
-                    VarType::Bool => Value::Bool(*(x as *const bool)),
-                    VarType::Int => Value::Int(*(x as *const i32)),
-                    VarType::Bitfield => Value::Bitfield(*(x as *const i32)),
-                    VarType::Float => Value::Float(*(x as *const f32)),
-                    VarType::Double => Value::Double(*(x as *const f64)),
-                    _ => todo!(), // ETCount
+    pub unsafe fn find_var(&self, name: &str) -> Option<Var> {
+        self.conn.as_ref().and_then(|c| {
+            let vhbase =
+                c.shared_mem.add((*c.header).var_header_offset as usize) as *const IrsdkVarHeader;
+            for i in 0..(*c.header).num_vars as usize {
+                let vh = vhbase.add(i);
+                if (*vh).has_name(name) {
+                    return Some(Var { hdr: *vh });
                 }
-            } else {
-                let l = var.count();
-                match var.hdr.var_type {
-                    VarType::Char => Value::Chars(slice::from_raw_parts(x, l)),
-                    VarType::Bool => Value::Bools(slice::from_raw_parts(x as *const bool, l)),
-                    VarType::Int => Value::Ints(slice::from_raw_parts(x as *const i32, l)),
-                    VarType::Bitfield => {
-                        Value::Bitfields(slice::from_raw_parts(x as *const i32, l))
-                    }
-                    VarType::Float => Value::Floats(slice::from_raw_parts(x as *const f32, l)),
-                    VarType::Double => Value::Doubles(slice::from_raw_parts(x as *const f64, l)),
-                    _ => todo!(), // ETCount
-                }
+            }
+            None
+        })
+    }
+    pub unsafe fn var_value(&self, var: &Var) -> Value {
+        let x = self.data.as_ptr().add(var.hdr.offset as usize);
+        if var.hdr.count == 1 {
+            match var.hdr.var_type {
+                VarType::Char => Value::Char(*x),
+                VarType::Bool => Value::Bool(*(x as *const bool)),
+                VarType::Int => Value::Int(*(x as *const i32)),
+                VarType::Bitfield => Value::Bitfield(*(x as *const i32)),
+                VarType::Float => Value::Float(*(x as *const f32)),
+                VarType::Double => Value::Double(*(x as *const f64)),
+                _ => todo!(), // ETCount
+            }
+        } else {
+            let l = var.count();
+            match var.hdr.var_type {
+                VarType::Char => Value::Chars(slice::from_raw_parts(x, l)),
+                VarType::Bool => Value::Bools(slice::from_raw_parts(x as *const bool, l)),
+                VarType::Int => Value::Ints(slice::from_raw_parts(x as *const i32, l)),
+                VarType::Bitfield => Value::Bitfields(slice::from_raw_parts(x as *const i32, l)),
+                VarType::Float => Value::Floats(slice::from_raw_parts(x as *const f32, l)),
+                VarType::Double => Value::Doubles(slice::from_raw_parts(x as *const f64, l)),
+                _ => todo!(), // ETCount
             }
         }
     }
-    pub fn value<T: FromValue>(&self, var: &Var) -> Result<T, Error> {
+    pub unsafe fn value<T: FromValue>(&self, var: &Var) -> Result<T, Error> {
         let v = self.var_value(var);
         T::var_result(&v)
     }
-    pub fn session_info_update(&self) -> Option<i32> {
-        unsafe { self.header.map(|h| (*h).session_info_update) }
+    pub unsafe fn session_info_update(&self) -> Option<i32> {
+        self.conn.as_ref().map(|c| (*c.header).session_info_update)
     }
-    pub fn session_info(&self) -> Result<String, std::borrow::Cow<str>> {
-        match self.header {
-            None => Err(std::borrow::Cow::from("not connected")),
-            Some(h) => unsafe {
-                let p = self.shared_mem.add((*h).session_info_offset as usize) as *mut u8;
-                let mut bytes = std::slice::from_raw_parts(p, (*h).session_info_len as usize);
+    pub unsafe fn session_info(&self) -> Result<String, std::borrow::Cow<str>> {
+        match &self.conn {
+            None => Ok("".into()),
+            Some(c) => {
+                let p = c.shared_mem.add((*c.header).session_info_offset as usize) as *mut u8;
+                let mut bytes =
+                    std::slice::from_raw_parts(p, (*c.header).session_info_len as usize);
                 // session_info_len is the size of the buffer, not necessarily the size of the string
                 // so we have to look for the null terminatior.
                 for i in 0..bytes.len() {
@@ -647,7 +658,7 @@ impl Client {
                     }
                 }
                 WINDOWS_1252.decode(bytes, DecoderTrap::Replace)
-            },
+            }
         }
     }
 }

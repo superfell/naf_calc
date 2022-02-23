@@ -90,28 +90,31 @@ impl Drop for CalcState {
 }
 impl IrCalc {
     pub fn new() -> IrCalc {
-        let mut c = IrCalc {
-            client: ir::Client::new(),
+        IrCalc {
+            client: unsafe { ir::Client::new() },
             state: None,
-        };
-        c.client.startup();
-        c
+        }
     }
     pub fn update(&mut self, result: &mut State) {
-        if !self.client.get_new_data() {
-            if !self.client.connected() {
-                *result = State::default();
-                self.state = None;
+        unsafe {
+            if !self.client.get_new_data() {
+                if !self.client.connected() {
+                    *result = State::default();
+                    self.state = None;
+                    return;
+                }
                 return;
             }
-            return;
         }
         result.connected = true;
         if self.state.is_none() {
-            let session_info = match self.client.session_info() {
-                Ok(s) => SessionInfo::parse(&s, 0),
-                Err(e) => panic!("failed to decode session string {}", e),
-            };
+            let session_info;
+            unsafe {
+                session_info = match self.client.session_info() {
+                    Ok(s) => SessionInfo::parse(&s, 0),
+                    Err(e) => panic!("failed to decode session string {}", e),
+                };
+            }
             let cfg = RaceConfig {
                 fuel_tank_size: (session_info.driver_car_fuel_max_ltr
                     * session_info.driver_car_max_fuel_pct) as f32,
@@ -332,41 +335,45 @@ struct CarStateFactory {
 }
 impl CarStateFactory {
     fn new(c: &ir::Client) -> CarStateFactory {
-        CarStateFactory {
-            session_num: c.find_var("SessionNum").unwrap(),
-            session_time: c.find_var("SessionTime").unwrap(),
-            is_on_track: c.find_var("IsOnTrack").unwrap(),
-            player_track_surface: c.find_var("PlayerTrackSurface").unwrap(),
-            session_state: c.find_var("SessionState").unwrap(),
-            session_flags: c.find_var("SessionFlags").unwrap(),
-            session_time_remain: c.find_var("SessionTimeRemain").unwrap(),
-            session_laps_remain: c.find_var("SessionLapsRemainEx").unwrap(),
-            session_time_total: c.find_var("SessionTimeTotal").unwrap(),
-            session_laps_total: c.find_var("SessionLapsTotal").unwrap(),
-            lap: c.find_var("Lap").unwrap(),
-            lap_completed: c.find_var("LapCompleted").unwrap(),
-            race_laps: c.find_var("RaceLaps").unwrap(),
-            fuel_level: c.find_var("FuelLevel").unwrap(),
-            lap_progress: c.find_var("LapDistPct").unwrap(),
+        unsafe {
+            CarStateFactory {
+                session_num: c.find_var("SessionNum").unwrap(),
+                session_time: c.find_var("SessionTime").unwrap(),
+                is_on_track: c.find_var("IsOnTrack").unwrap(),
+                player_track_surface: c.find_var("PlayerTrackSurface").unwrap(),
+                session_state: c.find_var("SessionState").unwrap(),
+                session_flags: c.find_var("SessionFlags").unwrap(),
+                session_time_remain: c.find_var("SessionTimeRemain").unwrap(),
+                session_laps_remain: c.find_var("SessionLapsRemainEx").unwrap(),
+                session_time_total: c.find_var("SessionTimeTotal").unwrap(),
+                session_laps_total: c.find_var("SessionLapsTotal").unwrap(),
+                lap: c.find_var("Lap").unwrap(),
+                lap_completed: c.find_var("LapCompleted").unwrap(),
+                race_laps: c.find_var("RaceLaps").unwrap(),
+                fuel_level: c.find_var("FuelLevel").unwrap(),
+                lap_progress: c.find_var("LapDistPct").unwrap(),
+            }
         }
     }
     fn read(&self, c: &ir::Client) -> CarState {
-        CarState {
-            session_num: c.value(&self.session_num).unwrap(),
-            session_time: c.value(&self.session_time).unwrap(),
-            is_on_track: c.value(&self.is_on_track).unwrap(),
-            player_track_surface: c.value(&self.player_track_surface).unwrap(),
-            session_state: c.value(&self.session_state).unwrap(),
-            session_flags: c.value(&self.session_flags).unwrap(),
-            session_time_remain: c.value(&self.session_time_remain).unwrap(),
-            session_laps_remain: c.value(&self.session_laps_remain).unwrap(),
-            session_time_total: c.value(&self.session_time_total).unwrap(),
-            session_laps_total: c.value(&self.session_laps_total).unwrap(),
-            lap: c.value(&self.lap).unwrap(),
-            lap_completed: c.value(&self.lap_completed).unwrap(),
-            race_laps: c.value(&self.race_laps).unwrap(),
-            fuel_level: c.value(&self.fuel_level).unwrap(),
-            lap_progress: c.value(&self.lap_progress).unwrap(),
+        unsafe {
+            CarState {
+                session_num: c.value(&self.session_num).unwrap(),
+                session_time: c.value(&self.session_time).unwrap(),
+                is_on_track: c.value(&self.is_on_track).unwrap(),
+                player_track_surface: c.value(&self.player_track_surface).unwrap(),
+                session_state: c.value(&self.session_state).unwrap(),
+                session_flags: c.value(&self.session_flags).unwrap(),
+                session_time_remain: c.value(&self.session_time_remain).unwrap(),
+                session_laps_remain: c.value(&self.session_laps_remain).unwrap(),
+                session_time_total: c.value(&self.session_time_total).unwrap(),
+                session_laps_total: c.value(&self.session_laps_total).unwrap(),
+                lap: c.value(&self.lap).unwrap(),
+                lap_completed: c.value(&self.lap_completed).unwrap(),
+                race_laps: c.value(&self.race_laps).unwrap(),
+                fuel_level: c.value(&self.fuel_level).unwrap(),
+                lap_progress: c.value(&self.lap_progress).unwrap(),
+            }
         }
     }
 }
