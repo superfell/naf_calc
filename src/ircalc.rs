@@ -129,9 +129,8 @@ impl CalcState {
         };
         let this = self.read()?;
         if this.session_time < self.last.session_time {
-            // reset
-            // TODO, will we hit this with the tick check in Session?
-            println!("session time went backwards");
+            // If the session time goes backwards then we've moved between
+            // different sessions inside a single race, e.g. practice -> qualy
             self.calc.save_laps().unwrap(); //TODO
             self.last = this;
             self.lap_start = this;
