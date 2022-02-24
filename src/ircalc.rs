@@ -147,6 +147,10 @@ impl SessionProgress {
         {
             // reset lap start when we leave the pit box
             self.lap_start = this;
+            // show the stratagy if there's one available
+            if let Some(x) = self.calc.strat(this.ends()) {
+                strat_to_result(&x, result);
+            }
         }
         if this.session_state == SessionState::ParadeLaps
             && self.last.session_state != this.session_state

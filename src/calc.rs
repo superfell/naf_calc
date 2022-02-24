@@ -5,7 +5,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, Error};
 
 use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy};
-use std::{cmp, path::PathBuf};
+use std::{cmp, path::PathBuf, time::Duration};
 
 #[derive(Clone, Debug)]
 pub struct RaceConfig {
@@ -22,6 +22,8 @@ pub struct Calculator {
     cfg: RaceConfig,
     laps: Vec<Lap>,
     db: Option<Db>,
+    def_green: Option<Rate>,
+    def_yellow: Option<Rate>,
 }
 struct Db {
     con_mgr: SqliteConnectionManager,
@@ -50,15 +52,20 @@ impl Calculator {
             cfg,
             laps: Vec::with_capacity(16),
             db,
+            def_green: None,
+            def_yellow: None,
         };
         c.init_schema()?;
+        c.def_green = c.db_green_laps();
+        c.def_yellow = c.db_yellow_laps();
         c.insert_session().expect("failed to insert session");
         Ok(c)
     }
     pub fn add_lap(&mut self, l: Lap) {
         self.laps.push(l);
     }
-    // calculates a green lap fuel/time estimate from recently completed green laps.
+    // calculates a green lap fuel/time estimate from recently completed green laps. If there are no
+    // laps available will default to data from previous sessions if available.
     fn recent_green(&self) -> Option<Rate> {
         let (c, r) = self
             .laps
@@ -67,16 +74,19 @@ impl Calculator {
             .filter(|&l| l.condition.is_empty())
             .take(5)
             .fold((0, Rate::default()), |acc, lap| (acc.0 + 1, acc.1.add(lap)));
-        if c == 0 {
-            None
-        } else {
+        if self.def_green.is_some() && c < 2 {
+            self.def_green
+        } else if c >= 1 {
             Some(Rate {
                 fuel: r.fuel / (c as f32),
                 time: r.time / c,
             })
+        } else {
+            None
         }
     }
-    // calculates a yellow flag lap fuel/time estimate from prior yellow laps.
+    // calculates a yellow flag lap fuel/time estimate from prior yellow laps. If there are no
+    // available laps will default to data from previous sessions if available.
     fn recent_yellow(&self) -> Option<Rate> {
         // we want to ignore the first lap of the set of yellow laps, as its a partial yellow lap
         // and not indicitive of a "normal" yellow lap.
@@ -96,7 +106,7 @@ impl Calculator {
             }
         }
         if count == 0 {
-            None
+            self.def_yellow
         } else {
             Some(Rate {
                 fuel: total.fuel / (count as f32),
@@ -207,6 +217,33 @@ impl Calculator {
             db.laps_written = self.laps.len();
         }
         Ok(())
+    }
+    fn db_green_laps(&self) -> Option<Rate> {
+        self.db_laps(LapState::empty().bits())
+    }
+    fn db_yellow_laps(&self) -> Option<Rate> {
+        self.db_laps(LapState::YELLOW.bits())
+    }
+    fn db_laps(&self, cond: i32) -> Option<Rate> {
+        self.db.as_ref().map(|db| {
+            let q_avg = "select avg(fuel_used) as f, avg(lap_time) as t from  (
+                                select l.fuel_used,l.lap_time from lap l inner join session s on l.session=s.id 
+                                where s.car_id=? and s.track_id=? and l.condition=? order by l.id desc limit 5)";
+            let x= db.con.query_row(q_avg, params![self.cfg.car_id,self.cfg.track_id,cond], |row| Ok(Rate{
+                fuel: row.get("f")?,
+                time: Duration::from_secs_f64(row.get("t")?),
+            }));
+            match x {
+                Err(e) => {
+                    println!("db query error {}",e);
+                    None
+                }
+                Ok(r) => {
+                    println!("rate from db {} {:?} for condition {}", r.fuel, r.time, cond);
+                    Some(r)
+                }
+            }
+        }).flatten()
     }
 }
 

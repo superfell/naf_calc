@@ -49,9 +49,17 @@ fn val<T: Data>(text: impl Into<LabelText<T>>) -> impl Widget<T> {
 
 const COLOR_KEY: Key<Color> = Key::new("color-key");
 const ONE_HR: Duration = Duration::new(60 * 60, 0);
+const COLOR_CLEAR: Color = Color::rgba8(0, 0, 0, 0);
 
-fn colorer<T: PartialOrd + Copy + Add<Output = T>>(car: T, race: T, buffer: T) -> Color {
-    if car >= race + buffer {
+fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
+    enable: bool,
+    car: T,
+    race: T,
+    buffer: T,
+) -> Color {
+    if !enable {
+        COLOR_CLEAR
+    } else if car >= race + buffer {
         Color::GREEN
     } else if car >= race {
         Color::YELLOW
@@ -104,7 +112,7 @@ fn build_root_widget() -> impl Widget<Estimation> {
             format!(
                 "{:}:{:02}:{:02}",
                 f.time.as_secs() / 3600,
-                (f.time / 60).as_secs() % 3600,
+                (f.time.as_secs() % 3600) / 60,
                 f.time.as_secs() % 60
             )
         } else {
@@ -118,7 +126,12 @@ fn build_root_widget() -> impl Widget<Estimation> {
             .lens(Estimation::car.then(AmountLeft::fuel))
             .border(GRID, GWIDTH)
             .background(COLOR_KEY)
-            .env_scope(|env, data| env.set(COLOR_KEY, colorer(data.car.fuel, data.race.fuel, 1.0))),
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    colorer(data.connected, data.car.fuel, data.race.fuel, 1.0),
+                )
+            }),
     );
     w.set(
         2,
@@ -127,7 +140,12 @@ fn build_root_widget() -> impl Widget<Estimation> {
             .lens(Estimation::car.then(AmountLeft::laps))
             .border(GRID, GWIDTH)
             .background(COLOR_KEY)
-            .env_scope(|env, data| env.set(COLOR_KEY, colorer(data.car.laps, data.race.laps, 0))),
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    colorer(data.connected, data.car.laps, data.race.laps, 0),
+                )
+            }),
     );
     w.set(
         3,
@@ -139,7 +157,12 @@ fn build_root_widget() -> impl Widget<Estimation> {
             .env_scope(|env, data| {
                 env.set(
                     COLOR_KEY,
-                    colorer(data.car.time, data.race.time, Duration::ZERO),
+                    colorer(
+                        data.connected,
+                        data.car.time,
+                        data.race.time,
+                        Duration::ZERO,
+                    ),
                 )
             }),
     );
@@ -255,8 +278,8 @@ struct GridWidget<T: Data> {
 impl<T: Data> GridWidget<T> {
     fn new(cols: usize, rows: usize) -> GridWidget<T> {
         let mut w = GridWidget {
-            cols: cols,
-            rows: rows,
+            cols,
+            rows,
             cells: Vec::with_capacity(cols * rows),
             col_widths: Vec::with_capacity(cols),
             row_heights: Vec::with_capacity(rows),
