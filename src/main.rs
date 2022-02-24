@@ -337,8 +337,10 @@ fn build_root_widget() -> impl Widget<Estimation> {
     }
 }
 
+type Options<T> = Vec<Option<T>>;
+
 struct GridWidget<T: Data> {
-    cells: Vec<Option<WidgetPod<T, Box<dyn Widget<T>>>>>,
+    cells: Options<WidgetPod<T, Box<dyn Widget<T>>>>,
     cols: usize,
     rows: usize,
     col_widths: Vec<Option<f64>>,
