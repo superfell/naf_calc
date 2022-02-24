@@ -6,6 +6,7 @@ use druid::{
 use druid::{LensExt, TimerToken};
 use ircalc::{AmountLeft, Estimation};
 use std::marker::PhantomData;
+use std::ops::Add;
 use std::time::Duration;
 use strat::Rate;
 
@@ -47,6 +48,17 @@ fn val<T: Data>(text: impl Into<LabelText<T>>) -> impl Widget<T> {
 }
 
 const COLOR_KEY: Key<Color> = Key::new("color-key");
+const ONE_HR: Duration = Duration::new(60 * 60, 0);
+
+fn colorer<T: PartialOrd + Copy + Add<Output = T>>(car: T, race: T, buffer: T) -> Color {
+    if car >= race + buffer {
+        Color::GREEN
+    } else if car >= race {
+        Color::YELLOW
+    } else {
+        Color::BLACK
+    }
+}
 
 fn build_root_widget() -> impl Widget<Estimation> {
     const GRID: Color = Color::GRAY;
@@ -88,23 +100,49 @@ fn build_root_widget() -> impl Widget<Estimation> {
         }
     };
     let fmt_tm = |f: &AmountLeft, _e: &Env| {
-        format!("{:02}:{:02}", f.time.as_secs() / 60, f.time.as_secs() % 60)
+        if f.time >= ONE_HR {
+            format!(
+                "{:}:{:02}:{:02}",
+                f.time.as_secs() / 3600,
+                (f.time / 60).as_secs() % 3600,
+                f.time.as_secs() % 60
+            )
+        } else {
+            format!("{:02}:{:02}", f.time.as_secs() / 60, f.time.as_secs() % 60)
+        }
     };
     w.set(
         1,
         1,
         val(fmt_f32)
             .lens(Estimation::car.then(AmountLeft::fuel))
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .background(COLOR_KEY)
+            .env_scope(|env, data| env.set(COLOR_KEY, colorer(data.car.fuel, data.race.fuel, 1.0))),
     );
     w.set(
         2,
         1,
         val(fmt_i32)
             .lens(Estimation::car.then(AmountLeft::laps))
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .background(COLOR_KEY)
+            .env_scope(|env, data| env.set(COLOR_KEY, colorer(data.car.laps, data.race.laps, 0))),
     );
-    w.set(3, 1, val(fmt_tm).lens(Estimation::car).border(GRID, GWIDTH));
+    w.set(
+        3,
+        1,
+        val(fmt_tm)
+            .lens(Estimation::car)
+            .border(GRID, GWIDTH)
+            .background(COLOR_KEY)
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    colorer(data.car.time, data.race.time, Duration::ZERO),
+                )
+            }),
+    );
     w.set(
         1,
         2,
