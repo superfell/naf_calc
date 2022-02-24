@@ -55,6 +55,7 @@ pub struct Estimation {
     pub stops: i32,                 // pitstops needed to finish race
     pub next_stop: Option<Pitstop>, // details on the next pitstop
     pub save: f32,                  // save this much fuel to skip the last pitstop
+    pub save_target: f32,           // target fuel usage per lap to meet save target
 }
 impl Default for Estimation {
     fn default() -> Self {
@@ -67,6 +68,7 @@ impl Default for Estimation {
             stops: 0,
             next_stop: None,
             save: 0.0,
+            save_target: 0.0,
         }
     }
 }
@@ -265,6 +267,12 @@ fn strat_to_result(strat: &Strategy, result: &mut Estimation) {
     result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
     result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
     result.race.time = strat.stints.iter().map(|s| s.time).sum();
+    result.save_target = if strat.fuel_to_save <= 0.0 {
+        0.0
+    } else {
+        let laps_til_last_stop: i32 = strat.stints.iter().rev().skip(1).map(|s| s.laps).sum();
+        strat.fuel_to_save / (laps_til_last_stop as f32)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
