@@ -1,4 +1,4 @@
-use druid::widget::{Align, Label, LabelText, SizedBox};
+use druid::widget::{Align, Label, LabelText, LineBreaking, SizedBox};
 use druid::{
     AppLauncher, BoxConstraints, Color, Data, Env, Event, FontDescriptor, FontFamily, FontWeight,
     Insets, Key, Point, Size, UnitPoint, Widget, WidgetExt, WidgetPod, WindowDesc,
@@ -32,7 +32,7 @@ fn main() {
         .expect("Failed to launch application");
 }
 
-fn lbl(l: &str, align: UnitPoint) -> impl Widget<Estimation> {
+fn lbl<T: Data>(l: impl Into<LabelText<T>>, align: UnitPoint) -> impl Widget<T> {
     SizedBox::new(Align::new(
         align,
         Label::new(l)
@@ -73,35 +73,60 @@ fn build_root_widget() -> impl Widget<Estimation> {
     const GWIDTH: f64 = 1.0;
     let mut w = GridWidget::new(4, 7);
     w.set_col_width(0, 150.0);
+    w.set_col_width(2, 175.0);
     w.set_row_height(0, 45.0);
     w.set_row_height(3, 15.0);
-    for (r, s) in ["", "Car", "Race", "", "Last Lap", "Average", "Pit"]
-        .iter()
+    w.set(
+        0,
+        0,
+        Label::new(|d: &bool, _: &Env| {
+            if *d {
+                String::new()
+            } else {
+                "Waiting for iRacing".to_string()
+            }
+        })
+        .with_line_break_mode(LineBreaking::WordWrap)
+        .center()
+        .background(COLOR_KEY)
+        .env_scope(|env, d: &bool| env.set(COLOR_KEY, if *d { COLOR_CLEAR } else { Color::NAVY }))
+        .lens(Estimation::connected)
+        .border(GRID, GWIDTH),
+    );
+    for (r, s) in ["Car", "Race", "", "Last Lap", "Average"]
+        .into_iter()
         .enumerate()
     {
         if !s.is_empty() {
             w.set(
                 0,
-                r,
+                r + 1,
                 lbl(s, UnitPoint::LEFT)
                     .padding(Insets::new(6.0, 0.0, 0.0, 0.0))
                     .border(GRID, GWIDTH),
             );
         } else {
-            w.set(0, r, SizedBox::empty().width(10.0).height(10.0));
+            w.set(0, r + 1, SizedBox::empty().width(10.0).height(10.0));
         }
     }
 
-    for (i, s) in ["Fuel", "Laps", "Time"].iter().enumerate() {
+    for (i, s) in ["Fuel", "Laps", "Time"].into_iter().enumerate() {
         w.set(i + 1, 0, lbl(s, UnitPoint::CENTER).border(GRID, GWIDTH));
     }
     let fmt_f32 = |f: &f32, _e: &Env| format!("{:.2}", f);
+    let fmt_f32_blank_zero = |f: &f32, _e: &Env| {
+        if *f > 0.0 {
+            format!("{:.2}", f)
+        } else {
+            String::new()
+        }
+    };
     let fmt_i32 = |f: &i32, _e: &Env| format!("{:}", f);
     let fmt_ps = |f: &Option<strat::Pitstop>, _e: &Env| match f {
         None => "".to_string(),
         Some(ps) => {
             if ps.is_open() {
-                format!("OPEN {} Laps", ps.close)
+                format!("{} Laps", ps.close)
             } else {
                 format!("{}-{} Laps", ps.open, ps.close)
             }
@@ -203,12 +228,14 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         3,
         4,
-        val(fmt_f32).lens(Estimation::save).border(GRID, GWIDTH),
+        val(fmt_f32_blank_zero)
+            .lens(Estimation::save)
+            .border(GRID, GWIDTH),
     );
     w.set(
         1,
         5,
-        val(fmt_f32)
+        val(fmt_f32_blank_zero)
             .lens(Estimation::green.then(Rate::fuel))
             .border(GRID, GWIDTH),
     );
@@ -222,14 +249,71 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         3,
         5,
-        val(fmt_f32)
+        val(fmt_f32_blank_zero)
             .lens(Estimation::save_target)
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .background(COLOR_KEY)
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    if data.save_target > 0.0 {
+                        if data.fuel_last_lap <= data.save_target {
+                            Color::GREEN
+                        } else {
+                            Color::BLUE
+                        }
+                    } else {
+                        COLOR_CLEAR
+                    },
+                )
+            }),
+    );
+    w.set(
+        0,
+        6,
+        lbl(
+            |d: &Option<strat::Pitstop>, _: &Env| {
+                match d {
+                    Some(ps) => {
+                        if ps.is_open() {
+                            "Pits OPEN"
+                        } else {
+                            "Pits"
+                        }
+                    }
+                    None => "Pits",
+                }
+                .to_string()
+            },
+            UnitPoint::LEFT,
+        )
+        .padding(Insets::new(0.6, 0.0, 0.0, 0.0))
+        .lens(Estimation::next_stop),
     );
     w.set(
         1,
         6,
-        val(fmt_ps).lens(Estimation::next_stop).border(GRID, GWIDTH),
+        val(fmt_ps)
+            .border(GRID, GWIDTH)
+            .background(COLOR_KEY)
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    match data {
+                        None => COLOR_CLEAR,
+                        Some(ps) => {
+                            if ps.is_open() && ps.close <= 1 {
+                                Color::RED
+                            } else if ps.is_open() {
+                                Color::GREEN
+                            } else {
+                                Color::BLACK
+                            }
+                        }
+                    },
+                )
+            })
+            .lens(Estimation::next_stop),
     );
     w.set(
         2,
@@ -252,21 +336,6 @@ fn build_root_widget() -> impl Widget<Estimation> {
         p: PhantomData,
     }
 }
-
-//     val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32)
-//         .background(COLOR_KEY)
-//         .env_scope(|env, data| {
-//             env.set(
-//                 COLOR_KEY,
-//                 if *data < 1.0 {
-//                     Color::RED
-//                 } else {
-//                     Color::GREEN
-//                 },
-//             )
-//         })
-//         .lens(Estimation::car.then(AmountLeft::fuel)),
-// )
 
 struct GridWidget<T: Data> {
     cells: Vec<Option<WidgetPod<T, Box<dyn Widget<T>>>>>,
