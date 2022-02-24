@@ -4,7 +4,7 @@ use druid::{
     Widget, WidgetExt, WindowDesc,
 };
 use druid::{LensExt, TimerToken};
-use ircalc::{ADuration, AmountLeft, Estimation};
+use ircalc::{AmountLeft, Estimation};
 use std::time::Duration;
 use strat::Rate;
 
@@ -68,7 +68,10 @@ fn build_root_widget() -> impl Widget<Estimation> {
             }
         }
     };
-    let fmt_tm = |f: &ADuration, _e: &Env| format!("{}", f);
+    let fmt_tm = |f: &AmountLeft, _e: &Env| {
+        format!("{:02}:{:02}", f.time.as_secs() / 60, f.time.as_secs() % 60)
+    };
+
     let mut calc = ircalc::Estimator::new();
 
     TimerWidget {
@@ -142,12 +145,10 @@ fn build_root_widget() -> impl Widget<Estimation> {
                 Flex::column()
                     .with_child(lbl("Time", UnitPoint::CENTER, C_WIDTH, R0_HEIGHT))
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_tm)
-                            .lens(Estimation::car.then(AmountLeft::time)),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_tm).lens(Estimation::car),
                     )
                     .with_child(
-                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_tm)
-                            .lens(Estimation::race.then(AmountLeft::time)),
+                        val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_tm).lens(Estimation::race),
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32).lens(Estimation::save),

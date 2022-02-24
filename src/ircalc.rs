@@ -33,14 +33,15 @@ impl fmt::Display for ADuration {
 pub struct AmountLeft {
     pub fuel: f32,
     pub laps: i32,
-    pub time: ADuration,
+    #[data(same_fn = "PartialEq::eq")]
+    pub time: Duration,
 }
 impl Default for AmountLeft {
     fn default() -> Self {
         AmountLeft {
             fuel: 0.0,
             laps: 0,
-            time: ADuration { d: Duration::ZERO },
+            time: Duration::ZERO,
         }
     }
 }
@@ -178,12 +179,12 @@ impl SessionProgress {
         result.car.fuel = this.fuel_level;
         if result.green.fuel > 0.0 {
             result.car.laps = f32::floor(this.fuel_level / result.green.fuel) as i32;
-            result.car.time.d = Duration::from_secs_f32(
+            result.car.time = Duration::from_secs_f32(
                 this.fuel_level / result.green.fuel * result.green.time.as_secs_f32(),
             );
         } else {
             result.car.laps = 0;
-            result.car.time.d = Duration::ZERO;
+            result.car.time = Duration::ZERO;
         }
         // update race time/laps left from source, not strat
         let tick = this.session_time - self.last.session_time;
@@ -191,14 +192,14 @@ impl SessionProgress {
         match this.ends() {
             EndsWith::Laps(l) => {
                 result.race.laps = l;
-                result.race.time.d -= Duration::min(result.race.time.d, dtick);
+                result.race.time -= Duration::min(result.race.time, dtick);
             }
             EndsWith::Time(d) => {
-                result.race.time.d = d;
+                result.race.time = d;
             }
             EndsWith::LapsOrTime(l, d) => {
                 result.race.laps = l;
-                result.race.time.d = d;
+                result.race.time = d;
             }
         }
         self.last = this;
@@ -263,7 +264,7 @@ fn strat_to_result(strat: &Strategy, result: &mut Estimation) {
     result.green = strat.green;
     result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
     result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
-    result.race.time.d = strat.stints.iter().map(|s| s.time).sum();
+    result.race.time = strat.stints.iter().map(|s| s.time).sum();
 }
 
 #[derive(Clone, Copy, Debug)]
