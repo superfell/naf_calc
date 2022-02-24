@@ -1,7 +1,7 @@
-use druid::widget::{Align, Container, Label, LabelText, SizedBox};
+use druid::widget::{Align, Label, LabelText, SizedBox};
 use druid::{
     AppLauncher, BoxConstraints, Color, Data, Env, Event, FontDescriptor, FontFamily, FontWeight,
-    Key, Point, UnitPoint, Widget, WidgetExt, WidgetPod, WindowDesc,
+    Insets, Key, Point, Size, UnitPoint, Widget, WidgetExt, WidgetPod, WindowDesc,
 };
 use druid::{LensExt, TimerToken};
 use ircalc::{AmountLeft, Estimation};
@@ -31,22 +31,19 @@ fn main() {
         .expect("Failed to launch application");
 }
 
-fn lbl(l: &str, align: UnitPoint, w: f64, h: f64) -> Container<Estimation> {
-    Container::new(
-        SizedBox::new(Align::new(align, Label::new(l).with_text_size(32.0)))
-            .width(w)
-            .height(h),
-    )
+fn lbl(l: &str, align: UnitPoint) -> impl Widget<Estimation> {
+    SizedBox::new(Align::new(
+        align,
+        Label::new(l)
+            .with_text_size(32.0)
+            .with_text_color(Color::grey8(200)),
+    ))
 }
-fn val<T: Data>(align: UnitPoint, w: f64, h: f64, text: impl Into<LabelText<T>>) -> Container<T> {
+fn val<T: Data>(text: impl Into<LabelText<T>>) -> impl Widget<T> {
     let font = FontDescriptor::new(FontFamily::SYSTEM_UI)
         .with_weight(FontWeight::BOLD)
-        .with_size(48.0);
-    Container::new(
-        SizedBox::new(Align::new(align, Label::<T>::new(text).with_font(font)))
-            .width(w)
-            .height(h),
-    )
+        .with_size(56.0);
+    Align::new(UnitPoint::CENTER, Label::<T>::new(text).with_font(font))
 }
 
 const COLOR_KEY: Key<Color> = Key::new("color-key");
@@ -54,26 +51,32 @@ const COLOR_KEY: Key<Color> = Key::new("color-key");
 fn build_root_widget() -> impl Widget<Estimation> {
     const GRID: Color = Color::GRAY;
     const GWIDTH: f64 = 1.0;
-    let mut w = GridWidget::new(4, 6);
-    let mut r = 0;
-    for s in ["", "Car", "Race", "Last Lap", "Average", "Pit"] {
-        w.set(
-            0,
-            r,
-            lbl(s, UnitPoint::LEFT, 120.0, 40.0).border(GRID, GWIDTH),
-        );
-        r += 1;
+    let mut w = GridWidget::new(4, 7);
+    w.set_col_width(0, 150.0);
+    w.set_row_height(0, 45.0);
+    w.set_row_height(3, 15.0);
+    for (r, s) in ["", "Car", "Race", "", "Last Lap", "Average", "Pit"]
+        .iter()
+        .enumerate()
+    {
+        if s.len() > 0 {
+            w.set(
+                0,
+                r,
+                lbl(s, UnitPoint::LEFT)
+                    .padding(Insets::new(6.0, 0.0, 0.0, 0.0))
+                    .border(GRID, GWIDTH),
+            );
+        } else {
+            w.set(0, r, SizedBox::empty().width(10.0).height(10.0));
+        }
     }
 
     for (i, s) in ["Fuel", "Laps", "Time"].iter().enumerate() {
-        w.set(
-            i + 1,
-            0,
-            lbl(s, UnitPoint::CENTER, 40.0, 40.0).border(GRID, GWIDTH),
-        );
+        w.set(i + 1, 0, lbl(s, UnitPoint::CENTER).border(GRID, GWIDTH));
     }
     let fmt_f32 = |f: &f32, _e: &Env| format!("{:.2}", f);
-    let fmt_i32 = |f: &i32, _e: &Env| format!("{:2}", f);
+    let fmt_i32 = |f: &i32, _e: &Env| format!("{:}", f);
     let fmt_ps = |f: &Option<strat::Pitstop>, _e: &Env| match f {
         None => "".to_string(),
         Some(ps) => {
@@ -90,101 +93,94 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         1,
         1,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_f32)
+        val(fmt_f32)
             .lens(Estimation::car.then(AmountLeft::fuel))
             .border(GRID, GWIDTH),
     );
     w.set(
         2,
         1,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_i32)
+        val(fmt_i32)
             .lens(Estimation::car.then(AmountLeft::laps))
             .border(GRID, GWIDTH),
     );
-    w.set(
-        3,
-        1,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_tm)
-            .lens(Estimation::car)
-            .border(GRID, GWIDTH),
-    );
+    w.set(3, 1, val(fmt_tm).lens(Estimation::car).border(GRID, GWIDTH));
     w.set(
         1,
         2,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_f32)
+        val(fmt_f32)
             .lens(Estimation::race.then(AmountLeft::fuel))
             .border(GRID, GWIDTH),
     );
     w.set(
         2,
         2,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_i32)
+        val(fmt_i32)
             .lens(Estimation::race.then(AmountLeft::laps))
             .border(GRID, GWIDTH),
     );
     w.set(
         3,
         2,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_tm)
-            .lens(Estimation::race)
-            .border(GRID, GWIDTH),
-    );
-    w.set(
-        1,
-        3,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_f32)
-            .lens(Estimation::fuel_last_lap)
-            .border(GRID, GWIDTH),
-    );
-    w.set(
-        2,
-        3,
-        lbl("Save", UnitPoint::RIGHT, 40.0, 40.0).border(GRID, GWIDTH),
-    );
-    w.set(
-        3,
-        3,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_f32)
-            .lens(Estimation::save)
-            .border(GRID, GWIDTH),
+        val(fmt_tm).lens(Estimation::race).border(GRID, GWIDTH),
     );
     w.set(
         1,
         4,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_f32)
+        val(fmt_f32)
+            .lens(Estimation::fuel_last_lap)
+            .border(GRID, GWIDTH),
+    );
+    let pad_right = Insets::new(0.0, 0.0, 6.0, 0.0);
+    w.set(
+        2,
+        4,
+        lbl("Save", UnitPoint::RIGHT)
+            .padding(pad_right)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        3,
+        4,
+        val(fmt_f32).lens(Estimation::save).border(GRID, GWIDTH),
+    );
+    w.set(
+        1,
+        5,
+        val(fmt_f32)
             .lens(Estimation::green.then(Rate::fuel))
             .border(GRID, GWIDTH),
     );
     w.set(
         2,
-        4,
-        lbl("Target", UnitPoint::RIGHT, 40.0, 40.0).border(GRID, GWIDTH),
+        5,
+        lbl("Target", UnitPoint::RIGHT)
+            .padding(pad_right)
+            .border(GRID, GWIDTH),
     );
     w.set(
         3,
-        4,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_f32)
+        5,
+        val(fmt_f32)
             .lens(Estimation::save_target)
             .border(GRID, GWIDTH),
     );
     w.set(
         1,
-        5,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_ps)
-            .lens(Estimation::next_stop)
-            .border(GRID, GWIDTH),
+        6,
+        val(fmt_ps).lens(Estimation::next_stop).border(GRID, GWIDTH),
     );
     w.set(
         2,
-        5,
-        lbl("Stops", UnitPoint::RIGHT, 40.0, 40.0).border(GRID, GWIDTH),
+        6,
+        lbl("Stops", UnitPoint::RIGHT)
+            .padding(pad_right)
+            .border(GRID, GWIDTH),
     );
     w.set(
         3,
-        5,
-        val(UnitPoint::CENTER, 40.0, 40.0, fmt_i32)
-            .lens(Estimation::stops)
-            .border(GRID, GWIDTH),
+        6,
+        val(fmt_i32).lens(Estimation::stops).border(GRID, GWIDTH),
     );
 
     let mut calc = ircalc::Estimator::new();
@@ -211,28 +207,36 @@ fn build_root_widget() -> impl Widget<Estimation> {
 //         .lens(Estimation::car.then(AmountLeft::fuel)),
 // )
 
-struct GridWidget<T: Data, CW: Widget<T>> {
-    cells: Vec<Option<WidgetPod<T, CW>>>,
+struct GridWidget<T: Data> {
+    cells: Vec<Option<WidgetPod<T, Box<dyn Widget<T>>>>>,
     cols: usize,
     rows: usize,
-    p: PhantomData<T>,
+    col_widths: Vec<Option<f64>>,
+    row_heights: Vec<Option<f64>>,
 }
-impl<T: Data, CW: Widget<T>> GridWidget<T, CW> {
-    fn new(cols: usize, rows: usize) -> GridWidget<T, CW> {
+impl<T: Data> GridWidget<T> {
+    fn new(cols: usize, rows: usize) -> GridWidget<T> {
         let mut w = GridWidget {
             cols: cols,
             rows: rows,
             cells: Vec::with_capacity(cols * rows),
-            p: PhantomData,
+            col_widths: Vec::with_capacity(cols),
+            row_heights: Vec::with_capacity(rows),
         };
-        for _i in 0..(cols * rows) {
-            w.cells.push(None);
-        }
+        w.cells.resize_with(cols * rows, || None);
+        w.col_widths.resize(cols, None);
+        w.row_heights.resize(rows, None);
         w
     }
-    fn set(&mut self, col: usize, row: usize, cell: CW) {
+    fn set(&mut self, col: usize, row: usize, cell: impl Widget<T> + 'static) {
         let idx = self.cell_idx(col, row);
-        self.cells[idx] = Some(WidgetPod::new(cell));
+        self.cells[idx] = Some(WidgetPod::new(cell).boxed());
+    }
+    fn set_row_height(&mut self, row: usize, height: f64) {
+        self.row_heights[row] = Some(height);
+    }
+    fn set_col_width(&mut self, col: usize, width: f64) {
+        self.col_widths[col] = Some(width);
     }
     fn cell_idx(&self, col: usize, row: usize) -> usize {
         // across, then down
@@ -240,7 +244,7 @@ impl<T: Data, CW: Widget<T>> GridWidget<T, CW> {
     }
 }
 
-impl<T: Data, CW: Widget<T>> Widget<T> for GridWidget<T, CW> {
+impl<T: Data> Widget<T> for GridWidget<T> {
     fn event(&mut self, ctx: &mut druid::EventCtx, event: &Event, data: &mut T, env: &Env) {
         for c in &mut self.cells {
             if let Some(cell) = c {
@@ -278,23 +282,38 @@ impl<T: Data, CW: Widget<T>> Widget<T> for GridWidget<T, CW> {
         data: &T,
         env: &Env,
     ) -> druid::Size {
-        let cell_min = druid::Size::new(
-            bc.min().width / self.cols as f64,
-            bc.min().height / self.rows as f64,
+        let fixed_w: f64 = self.col_widths.iter().flatten().sum();
+        let fixed_wc = self.col_widths.iter().flatten().count();
+        let fixed_h: f64 = self.row_heights.iter().flatten().sum();
+        let fixed_hc = self.row_heights.iter().flatten().count();
+        let cell_min = Size::new(
+            (bc.min().width - fixed_w) / (self.cols - fixed_wc) as f64,
+            (bc.min().height - fixed_h) / (self.rows - fixed_hc) as f64,
         );
-        let cell_max = druid::Size::new(
-            bc.max().width / self.cols as f64,
-            bc.max().height / self.rows as f64,
+        let cell_max = Size::new(
+            (bc.max().width - fixed_w) / (self.cols - fixed_wc) as f64,
+            (bc.max().height - fixed_h) / (self.rows - fixed_hc) as f64,
         );
-        let cell_bc = BoxConstraints::new(cell_min, cell_max);
         let mut y = 0f64;
         for r in 0..self.rows {
+            let mut cell_bc = BoxConstraints::new(cell_min, cell_max);
+            if let Some(h) = self.row_heights[r] {
+                cell_bc =
+                    BoxConstraints::new(Size::new(cell_min.width, h), Size::new(cell_max.width, h));
+            }
             let mut max_height = 0f64;
             let mut x = 0f64;
             for c in 0..self.cols {
                 let idx = self.cell_idx(c, r);
+                let this_bc = match self.col_widths[c] {
+                    None => cell_bc,
+                    Some(w) => BoxConstraints::new(
+                        Size::new(w, cell_bc.min().height),
+                        Size::new(w, cell_bc.max().height),
+                    ),
+                };
                 if let Some(w) = &mut self.cells[idx] {
-                    let cs = w.layout(ctx, &cell_bc, data, env);
+                    let cs = w.layout(ctx, &this_bc, data, env);
                     max_height = f64::max(max_height, cs.height);
                     w.set_origin(ctx, data, env, Point::new(x, y));
                     x += cs.width;

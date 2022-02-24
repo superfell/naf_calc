@@ -295,7 +295,7 @@ struct IRacingTelemetryRow {
 }
 impl IRacingTelemetryRow {
     fn time_remaining(&self) -> Duration {
-        Duration::from_secs_f64(self.session_time_remain)
+        Duration::from_secs_f64(self.session_time_remain.max(0.0))
     }
     fn ends(&self) -> EndsWith {
         // TODO deal with practice better
