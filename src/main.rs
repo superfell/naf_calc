@@ -59,7 +59,7 @@ fn build_root_widget() -> impl Widget<Estimation> {
         .iter()
         .enumerate()
     {
-        if s.len() > 0 {
+        if !s.is_empty() {
             w.set(
                 0,
                 r,
@@ -246,10 +246,8 @@ impl<T: Data> GridWidget<T> {
 
 impl<T: Data> Widget<T> for GridWidget<T> {
     fn event(&mut self, ctx: &mut druid::EventCtx, event: &Event, data: &mut T, env: &Env) {
-        for c in &mut self.cells {
-            if let Some(cell) = c {
-                cell.event(ctx, event, data, env);
-            }
+        for cell in self.cells.iter_mut().flatten() {
+            cell.event(ctx, event, data, env);
         }
     }
 
@@ -260,18 +258,14 @@ impl<T: Data> Widget<T> for GridWidget<T> {
         data: &T,
         env: &Env,
     ) {
-        for c in &mut self.cells {
-            if let Some(cell) = c {
-                cell.lifecycle(ctx, event, data, env);
-            }
+        for cell in self.cells.iter_mut().flatten() {
+            cell.lifecycle(ctx, event, data, env);
         }
     }
 
     fn update(&mut self, ctx: &mut druid::UpdateCtx, _old_data: &T, data: &T, env: &Env) {
-        for c in &mut self.cells {
-            if let Some(cell) = c {
-                cell.update(ctx, data, env);
-            }
+        for cell in self.cells.iter_mut().flatten() {
+            cell.update(ctx, data, env);
         }
     }
 
@@ -325,10 +319,8 @@ impl<T: Data> Widget<T> for GridWidget<T> {
     }
 
     fn paint(&mut self, ctx: &mut druid::PaintCtx, data: &T, env: &Env) {
-        for c in &mut self.cells {
-            if let Some(cell) = c {
-                cell.paint(ctx, data, env);
-            }
+        for cell in self.cells.iter_mut().flatten() {
+            cell.paint(ctx, data, env);
         }
     }
 }
