@@ -183,6 +183,10 @@ impl SessionProgress {
         }
         // update car status info in result
         result.car.fuel = this.fuel_level;
+        if this.is_on_track {
+            result.race.fuel =
+                (result.race.fuel - (self.last.fuel_level - this.fuel_level).max(0.0)).max(0.0)
+        }
         if result.green.fuel > 0.0 {
             result.car.laps = f32::floor(this.fuel_level / result.green.fuel) as i32;
             result.car.time = Duration::from_secs_f32(
@@ -193,6 +197,8 @@ impl SessionProgress {
             result.car.time = Duration::ZERO;
         }
         // update race time/laps left from source, not strat
+        // TODO during parade laps show race total time/laps not the parade time numbers.
+        // this also needs feeding into the strat() calls.
         let tick = this.session_time - self.last.session_time;
         let dtick = Duration::from_secs_f64(tick);
         match this.ends() {

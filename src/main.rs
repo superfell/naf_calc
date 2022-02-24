@@ -62,7 +62,7 @@ fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
     } else if car >= race + buffer {
         Color::GREEN
     } else if car >= race {
-        Color::YELLOW
+        Color::PURPLE
     } else {
         Color::BLACK
     }
