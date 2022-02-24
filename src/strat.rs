@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use bitflags::bitflags;
-use druid::Data;
+use druid::{Data, Lens};
 use math::round;
 use std::cmp;
 use std::fmt;
@@ -27,9 +27,10 @@ pub struct Lap {
     pub condition: LapState,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Data, Lens)]
 pub struct Rate {
     pub fuel: f32,
+    #[data(same_fn = "PartialEq::eq")]
     pub time: Duration,
 }
 impl Default for Rate {

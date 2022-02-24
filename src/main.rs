@@ -6,6 +6,7 @@ use druid::{
 use druid::{LensExt, TimerToken};
 use ircalc::{ADuration, AmountLeft, Estimation};
 use std::time::Duration;
+use strat::Rate;
 
 mod calc;
 mod ir;
@@ -112,7 +113,7 @@ fn build_root_widget() -> impl Widget<Estimation> {
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_f32)
-                            .lens(Estimation::fuel_avg),
+                            .lens(Estimation::green.then(Rate::fuel)),
                     )
                     .with_child(
                         val(UnitPoint::CENTER, C_WIDTH, R_HEIGHT, fmt_ps)

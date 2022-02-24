@@ -4,7 +4,7 @@ use super::calc::{Calculator, RaceConfig};
 use super::ir;
 use super::ir::flags::{Flags, SessionState, TrackLocation};
 use super::ir::DataUpdateResult;
-use super::strat::{EndsWith, Lap, LapState, Pitstop, Strategy};
+use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use std::fmt;
 use std::time::Duration;
@@ -50,7 +50,7 @@ pub struct Estimation {
     pub car: AmountLeft,            // what's left in the car
     pub race: AmountLeft,           // what's left to go in the race
     pub fuel_last_lap: f32,         // fuel used on the last lap
-    pub fuel_avg: f32,              // average per lap usage (green flag only)
+    pub green: Rate,                // average per lap usage (green flag only)
     pub stops: i32,                 // pitstops needed to finish race
     pub next_stop: Option<Pitstop>, // details on the next pitstop
     pub save: f32,                  // save this much fuel to skip the last pitstop
@@ -62,7 +62,7 @@ impl Default for Estimation {
             car: AmountLeft::default(),
             race: AmountLeft::default(),
             fuel_last_lap: 0.0,
-            fuel_avg: 0.0,
+            green: Rate::default(),
             stops: 0,
             next_stop: None,
             save: 0.0,
@@ -160,9 +160,7 @@ impl SessionProgress {
                 fuel_left: this.fuel_level,
                 fuel_used: self.lap_start.fuel_level - this.fuel_level,
                 // TODO, this is not interopolating the lap
-                time: Duration::from_millis(
-                    ((this.session_time - self.lap_start.session_time) * 1000.0) as u64,
-                ),
+                time: Duration::from_secs_f64(this.session_time - self.lap_start.session_time),
                 condition: this.lap_state() | self.lap_start.lap_state(),
             };
             if this.session_state != SessionState::Checkered
@@ -176,20 +174,24 @@ impl SessionProgress {
             result.fuel_last_lap = new_lap.fuel_used;
             self.lap_start = this;
         }
-        // update status info in result
+        // update car status info in result
         result.car.fuel = this.fuel_level;
-        // update race time/laps left from source, not strat
-        let tick = this.session_time - self.last.session_time;
-        let dtick = Duration::from_millis((tick * 1000.0) as u64);
-        if result.car.time.d > dtick {
-            result.car.time.d -= dtick;
+        if result.green.fuel > 0.0 {
+            result.car.laps = f32::floor(this.fuel_level / result.green.fuel) as i32;
+            result.car.time.d = Duration::from_secs_f32(
+                this.fuel_level / result.green.fuel * result.green.time.as_secs_f32(),
+            );
         } else {
+            result.car.laps = 0;
             result.car.time.d = Duration::ZERO;
         }
+        // update race time/laps left from source, not strat
+        let tick = this.session_time - self.last.session_time;
+        let dtick = Duration::from_secs_f64(tick);
         match this.ends() {
             EndsWith::Laps(l) => {
                 result.race.laps = l;
-                result.race.time.d -= dtick;
+                result.race.time.d -= Duration::min(result.race.time.d, dtick);
             }
             EndsWith::Time(d) => {
                 result.race.time.d = d;
@@ -258,9 +260,7 @@ fn strat_to_result(strat: &Strategy, result: &mut Estimation) {
         result.next_stop = Some(*strat.stops.first().unwrap());
     }
     result.stops = strat.stops.len() as i32;
-    result.fuel_avg = strat.green.fuel;
-    result.car.laps = strat.stints.first().map(|s| s.laps).unwrap_or_default();
-    result.car.time.d = strat.stints.first().map(|s| s.time).unwrap_or_default();
+    result.green = strat.green;
     result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
     result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
     result.race.time.d = strat.stints.iter().map(|s| s.time).sum();
@@ -286,7 +286,7 @@ struct IRacingTelemetryRow {
 }
 impl IRacingTelemetryRow {
     fn time_remaining(&self) -> Duration {
-        Duration::from_millis((self.session_time_remain * 1000.0) as u64)
+        Duration::from_secs_f64(self.session_time_remain)
     }
     fn ends(&self) -> EndsWith {
         // TODO deal with practice better
