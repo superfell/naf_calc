@@ -11,8 +11,11 @@ use std::os::raw::c_char;
 use std::rc::Rc;
 use std::slice;
 use std::time::Duration;
-use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WIN32_ERROR};
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, HANDLE, HWND, LPARAM, WIN32_ERROR, WPARAM,
+};
 use windows::Win32::System::{Memory, Threading};
+use windows::Win32::UI::WindowsAndMessaging::{RegisterWindowMessageA, SendNotifyMessageA};
 
 pub mod flags;
 
@@ -205,6 +208,39 @@ impl Session {
         // as we're using replace, this should not ever return an error
         WINDOWS_1252.decode(bytes, DecoderTrap::Replace).unwrap()
     }
+
+    /// this is all gross AF
+    unsafe fn broadcast_ms(&self, msg: i16, var1: i16, var2: isize) -> Result<(), WIN32_ERROR> {
+        use num::ToPrimitive;
+
+        // HWND_BROADCAST doesn't appear to be in windows crate?
+        let hwnd_bc = HWND(0xFFFF);
+        let x = makelong(var1, msg.to_i16().unwrap());
+        let r = SendNotifyMessageA(hwnd_bc, self.conn.broadcast_msg_id, WPARAM(x), LPARAM(var2));
+
+        if r.as_bool() {
+            Ok(())
+        } else {
+            Err(GetLastError())
+        }
+    }
+    pub unsafe fn broadcast_msg(&self, msg: flags::BroadcastMsg) -> Result<(), WIN32_ERROR> {
+        let (msg_id, (var1, var2)) = msg.msg();
+        // HWND_BROADCAST doesn't appear to be in windows crate?
+        let hwnd_bc = HWND(0xFFFF);
+        let x = makelong(msg_id, var1);
+        let r = SendNotifyMessageA(hwnd_bc, self.conn.broadcast_msg_id, WPARAM(x), LPARAM(var2));
+        if r.as_bool() {
+            Ok(())
+        } else {
+            Err(GetLastError())
+        }
+    }
+}
+fn makelong(var1: i16, var2: i16) -> usize {
+    // aka MAKELONG
+    let x = ((var1 as u32 & 0xFFFFu32) as u32) | (((var2 as u32) & 0xFFFFu32) << 16);
+    x as usize
 }
 
 pub struct Var {
@@ -240,6 +276,7 @@ struct Connection {
     shared_mem: *mut c_void,
     header: *mut IrsdkHeader,
     new_data: HANDLE,
+    broadcast_msg_id: u32,
 }
 impl Connection {
     // This will return an error if iRacing is not running.
@@ -267,12 +304,20 @@ impl Connection {
             CloseHandle(file_mapping);
             return e;
         }
-        let header = shared_mem as *mut IrsdkHeader;
+        let bc_id = RegisterWindowMessageA("IRSDK_BROADCASTMSG");
+        if bc_id == 0 {
+            let e = Err(GetLastError());
+            CloseHandle(new_data);
+            Memory::UnmapViewOfFile(shared_mem);
+            CloseHandle(file_mapping);
+            return e;
+        }
         Ok(Connection {
             file_mapping,
             shared_mem,
-            header,
+            header: shared_mem as *mut IrsdkHeader,
             new_data,
+            broadcast_msg_id: bc_id,
         })
     }
     unsafe fn connected(&self) -> bool {

@@ -1,13 +1,16 @@
 extern crate num;
 
 use bitflags::bitflags;
-use num_derive::FromPrimitive;
+use num::ToPrimitive;
+use num_derive::{FromPrimitive, ToPrimitive};
 
 bitflags! {
     pub struct StatusField:i32 {
         const CONNECTED = 1;
     }
 }
+
+// BITFIELD & ENUMs that can appear as telemetry values
 
 bitflags! {
     pub struct EngineWarnings:i32 {
@@ -182,5 +185,85 @@ bitflags! {
         const END_OF_LINE   = 0x01;
         const FREE_PASS     = 0x02;
         const WAVED_AROUND  = 0x04;
+    }
+}
+
+/// Enums for broadcast msg
+
+//----
+// Remote controll the sim by sending these windows messages
+// camera and replay commands only work when you are out of your car,
+// pit commands only work when in your car
+#[derive(Debug)]
+pub enum BroadcastMsg {
+    CamSwitchPos,               // car position, group, camera
+    CamSwitchNum,               // driver #, group, camera
+    CamSetState,                // irsdk_CameraState, unused, unused
+    ReplaySetPlaySpeed,         // speed, slowMotion, unused
+    ReplaySetPlayPosition,      // irsdk_RpyPosMode, Frame Number (high, low)
+    ReplaySearch,               // irsdk_RpySrchMode, unused, unused
+    ReplaySetState,             // irsdk_RpyStateMode, unused, unused
+    ReloadTextures,             // irsdk_ReloadTexturesMode, carIdx, unused
+    ChatComand,                 // irsdk_ChatCommandMode, subCommand, unused
+    PitCommand(PitCommandMode), // irsdk_PitCommandMode, parameter
+    TelemCommand,               // irsdk_TelemCommandMode, unused, unused
+    FFBCommand,                 // irsdk_FFBCommandMode, value (float, high, low)
+    ReplaySearchSessionTime,    // sessionNum, sessionTimeMS (high, low)
+    VideoCapture,               // irsdk_VideoCaptureMode, unused, unused
+    Last,                       // unused placeholder
+}
+impl BroadcastMsg {
+    pub fn msg(&self) -> (i16, (i16, isize)) {
+        match self {
+            BroadcastMsg::CamSwitchPos => todo!(),
+            BroadcastMsg::CamSwitchNum => todo!(),
+            BroadcastMsg::CamSetState => todo!(),
+            BroadcastMsg::ReplaySetPlaySpeed => todo!(),
+            BroadcastMsg::ReplaySetPlayPosition => todo!(),
+            BroadcastMsg::ReplaySearch => todo!(),
+            BroadcastMsg::ReplaySetState => todo!(),
+            BroadcastMsg::ReloadTextures => todo!(),
+            BroadcastMsg::ChatComand => todo!(),
+            BroadcastMsg::PitCommand(c) => (9, c.msg()),
+            BroadcastMsg::TelemCommand => todo!(),
+            BroadcastMsg::FFBCommand => todo!(),
+            BroadcastMsg::ReplaySearchSessionTime => todo!(),
+            BroadcastMsg::VideoCapture => todo!(),
+            BroadcastMsg::Last => todo!(),
+        }
+    }
+}
+// this only works when the driver is in the car
+#[derive(Debug)]
+pub enum PitCommandMode {
+    Clear,      // Clear all pit checkboxes
+    TearOff,    // WS: Clean the winshield, using one tear off
+    Fuel(i16), // Add fuel, optionally specify the amount to add in liters or pass '0' to use existing amount
+    LF(i16), // Change the left front tire, optionally specifying the pressure in KPa or pass '0' to use existing pressure
+    RF(i16), // right front
+    LR(i16), // left rear
+    RR(i16), // right rear
+    ClearTires, // Clear tire pit checkboxes
+    FastRepair, // FR: Request a fast repair
+    ClearWS, // Uncheck Clean the winshield checkbox
+    ClearFR, // Uncheck request a fast repair
+    ClearFuel, // Uncheck add fuel
+}
+impl PitCommandMode {
+    pub fn msg(&self) -> (i16, isize) {
+        match self {
+            PitCommandMode::Clear => (0, 0),
+            PitCommandMode::TearOff => (1, 0),
+            PitCommandMode::Fuel(l) => (2, *l as isize),
+            PitCommandMode::LF(p) => (3, *p as isize),
+            PitCommandMode::RF(p) => (4, *p as isize),
+            PitCommandMode::LR(p) => (5, *p as isize),
+            PitCommandMode::RR(p) => (6, *p as isize),
+            PitCommandMode::ClearTires => (7, 0),
+            PitCommandMode::FastRepair => (8, 0),
+            PitCommandMode::ClearWS => (9, 0),
+            PitCommandMode::ClearFR => (10, 0),
+            PitCommandMode::ClearFuel => (11, 0),
+        }
     }
 }
