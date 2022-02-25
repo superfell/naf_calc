@@ -17,17 +17,20 @@ mod strat;
 
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
+// fn main() {
+//     use crate::ir::flags::{CameraFocus, ChatCommand, FFBCommand, ReplaySearch};
+//     let mut c = ir::Client::new();
+//     unsafe {
+//         let s = c.session().unwrap();
+//         let x = s.broadcast_msg(flags::BroadcastMsg::ReplaySearchSessionTime(
+//             1,
+//             Duration::new(300, 0),
+//         ));
+//         println!("bc message result {:?}", x)
+//     }
+// }
+
 fn main() {
-    let mut c = ir::Client::new();
-    unsafe {
-        let s = c.session().unwrap();
-        let x = s.broadcast_msg(ir::flags::BroadcastMsg::PitCommand(
-            ir::flags::PitCommandMode::LF(150),
-        ));
-        println!("bc message result {:?}", x)
-    }
-}
-fn main2() {
     // describe the main window
     let main_window = WindowDesc::new(build_root_widget)
         .title("naf calc")

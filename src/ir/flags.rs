@@ -141,7 +141,11 @@ bitflags! {
         const USE_MOUSE_AIM_MODE        = 0x0100;
     }
 }
-
+impl CameraState {
+    pub fn params(&self) -> i32 {
+        self.bits()
+    }
+}
 bitflags! {
     pub struct PitSvcFlags:i32 {
         const LF_TIRE_CHANGE	= 0x0001;
@@ -191,79 +195,230 @@ bitflags! {
 /// Enums for broadcast msg
 
 //----
-// Remote controll the sim by sending these windows messages
+// Remote control the sim by sending these windows messages
 // camera and replay commands only work when you are out of your car,
 // pit commands only work when in your car
 #[derive(Debug)]
 pub enum BroadcastMsg {
-    CamSwitchPos,               // car position, group, camera
-    CamSwitchNum,               // driver #, group, camera
-    CamSetState,                // irsdk_CameraState, unused, unused
-    ReplaySetPlaySpeed,         // speed, slowMotion, unused
-    ReplaySetPlayPosition,      // irsdk_RpyPosMode, Frame Number (high, low)
-    ReplaySearch,               // irsdk_RpySrchMode, unused, unused
-    ReplaySetState,             // irsdk_RpyStateMode, unused, unused
-    ReloadTextures,             // irsdk_ReloadTexturesMode, carIdx, unused
-    ChatComand,                 // irsdk_ChatCommandMode, subCommand, unused
-    PitCommand(PitCommandMode), // irsdk_PitCommandMode, parameter
-    TelemCommand,               // irsdk_TelemCommandMode, unused, unused
-    FFBCommand,                 // irsdk_FFBCommandMode, value (float, high, low)
-    ReplaySearchSessionTime,    // sessionNum, sessionTimeMS (high, low)
-    VideoCapture,               // irsdk_VideoCaptureMode, unused, unused
-    Last,                       // unused placeholder
+    CamSwitchPos(CameraFocus, i16, i16), // car position, group, camera
+    CamSwitchNum(CameraFocus, i16, i16), // driver #, group, camera
+    CamSetState(CameraState),            // irsdk_CameraState, unused, unused
+    ReplaySetPlaySpeed(i16, bool),       // speed, slowMotion, unused
+    ReplaySetPlayPosition(ReplayPos, i32), // irsdk_RpyPosMode, Frame Number (60 frames a second)
+    ReplaySearch(ReplaySearch),          // irsdk_RpySrchMode, unused, unused
+    ReplaySetState(ReplayState),         // irsdk_RpyStateMode, unused, unused
+    ReloadTextures(ReloadTextures),      // irsdk_ReloadTexturesMode, carIdx, unused
+    ChatComand(ChatCommand),             // irsdk_ChatCommandMode, subCommand, unused
+    PitCommand(PitCommand),              // irsdk_PitCommandMode, parameter
+    TelemCommand(TelemCommand),          // irsdk_TelemCommandMode, unused, unused
+    FFBCommand(FFBCommand),              // irsdk_FFBCommandMode, value (float, high, low)
+    ReplaySearchSessionTime(i16, std::time::Duration), // sessionNum, sessionTimeMS (high, low)
+    VideoCapture(VideoCapture),          // irsdk_VideoCaptureMode, unused, unused
 }
 impl BroadcastMsg {
-    pub fn msg(&self) -> (i16, (i16, isize)) {
+    pub fn params(&self) -> (i16, (i16, isize)) {
         match self {
-            BroadcastMsg::CamSwitchPos => todo!(),
-            BroadcastMsg::CamSwitchNum => todo!(),
-            BroadcastMsg::CamSetState => todo!(),
-            BroadcastMsg::ReplaySetPlaySpeed => todo!(),
-            BroadcastMsg::ReplaySetPlayPosition => todo!(),
-            BroadcastMsg::ReplaySearch => todo!(),
-            BroadcastMsg::ReplaySetState => todo!(),
-            BroadcastMsg::ReloadTextures => todo!(),
-            BroadcastMsg::ChatComand => todo!(),
-            BroadcastMsg::PitCommand(c) => (9, c.msg()),
-            BroadcastMsg::TelemCommand => todo!(),
-            BroadcastMsg::FFBCommand => todo!(),
-            BroadcastMsg::ReplaySearchSessionTime => todo!(),
-            BroadcastMsg::VideoCapture => todo!(),
-            BroadcastMsg::Last => todo!(),
+            BroadcastMsg::CamSwitchPos(car, group, cam) => {
+                (0, (car.params(), makelong(*group, *cam)))
+            }
+            BroadcastMsg::CamSwitchNum(car, group, cam) => {
+                (1, (car.params(), makelong(*group, *cam)))
+            }
+            BroadcastMsg::CamSetState(cs) => (2, (cs.params() as i16, 0)), // CameraState would appear to overflow an i16
+            BroadcastMsg::ReplaySetPlaySpeed(speed, slow) => {
+                (3, (*speed, if *slow { 1 } else { 0 }))
+            }
+            BroadcastMsg::ReplaySetPlayPosition(pos, frame) => (4, (pos.params(), *frame as isize)),
+            BroadcastMsg::ReplaySearch(s) => (5, (s.parms(), 0)),
+            BroadcastMsg::ReplaySetState(s) => (6, (s.params(), 0)),
+            BroadcastMsg::ReloadTextures(r) => (7, (r.params())),
+            BroadcastMsg::ChatComand(c) => (8, (c.params())),
+            BroadcastMsg::PitCommand(c) => (9, c.params()),
+            BroadcastMsg::TelemCommand(t) => (10, (t.params(), 0)),
+            BroadcastMsg::FFBCommand(f) => (11, f.params()),
+            BroadcastMsg::ReplaySearchSessionTime(ses, tm) => (12, (*ses, tm.as_millis() as isize)),
+            BroadcastMsg::VideoCapture(v) => (13, (v.params(), 0)),
         }
     }
 }
+
+// irsdk_BroadcastCamSwitchPos or irsdk_BroadcastCamSwitchNum camera focus defines
+// pass these in for the first parameter to select the 'focus at' types in the camera system.
+#[derive(Debug)]
+pub enum CameraFocus {
+    Incident,
+    Leader,
+    Exciting,
+    // ctFocusAtDriver + car number...
+    Driver(i16),
+}
+impl CameraFocus {
+    fn params(&self) -> i16 {
+        match self {
+            CameraFocus::Incident => -3,
+            CameraFocus::Leader => -2,
+            CameraFocus::Exciting => -1,
+            CameraFocus::Driver(d) => *d,
+        }
+    }
+}
+
+#[derive(Debug, ToPrimitive)]
+pub enum ReplayPos {
+    Begin = 0,
+    Current,
+    End,
+}
+impl ReplayPos {
+    fn params(&self) -> i16 {
+        self.to_i16().unwrap()
+    }
+}
+
+#[derive(Debug, ToPrimitive)]
+pub enum ReplaySearch {
+    ToStart = 0,
+    ToEnd,
+    PrevSession,
+    NextSession,
+    PrevLap,
+    NextLap,
+    PrevFrame,
+    NextFrame,
+    PrevIncident,
+    NextIncident,
+}
+impl ReplaySearch {
+    fn parms(&self) -> i16 {
+        self.to_i16().unwrap()
+    }
+}
+
+#[derive(Debug, ToPrimitive)]
+pub enum ReplayState {
+    EraseTape = 0, // clear any data in the replay tape
+}
+impl ReplayState {
+    fn params(&self) -> i16 {
+        self.to_i16().unwrap()
+    }
+}
+
+#[derive(Debug)]
+pub enum ReloadTextures {
+    All,         // reload all textuers
+    CarIdx(i16), // reload only textures for the specific carIdx
+}
+impl ReloadTextures {
+    fn params(&self) -> (i16, isize) {
+        match self {
+            ReloadTextures::All => (0, 0),
+            ReloadTextures::CarIdx(i) => (1, *i as isize),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ChatCommand {
+    Macro(u8), // pass in a number from 1-15 representing the chat macro to launch (actual values 0-14)
+    BeginChat, // Open up a new chat window
+    Reply,     // Reply to last private chat
+    Cancel,    // Close chat window
+}
+impl ChatCommand {
+    fn params(&self) -> (i16, isize) {
+        match self {
+            ChatCommand::Macro(m) => (0, *m as isize),
+            ChatCommand::BeginChat => (1, 0),
+            ChatCommand::Reply => (2, 0),
+            ChatCommand::Cancel => (3, 0),
+        }
+    }
+}
+
 // this only works when the driver is in the car
 #[derive(Debug)]
-pub enum PitCommandMode {
-    Clear,      // Clear all pit checkboxes
-    TearOff,    // WS: Clean the winshield, using one tear off
-    Fuel(i16), // Add fuel, optionally specify the amount to add in liters or pass '0' to use existing amount
-    LF(i16), // Change the left front tire, optionally specifying the pressure in KPa or pass '0' to use existing pressure
-    RF(i16), // right front
-    LR(i16), // left rear
-    RR(i16), // right rear
-    ClearTires, // Clear tire pit checkboxes
-    FastRepair, // FR: Request a fast repair
-    ClearWS, // Uncheck Clean the winshield checkbox
-    ClearFR, // Uncheck request a fast repair
-    ClearFuel, // Uncheck add fuel
+pub enum PitCommand {
+    Clear,             // Clear all pit checkboxes
+    TearOff,           // WS: Clean the winshield, using one tear off
+    Fuel(Option<i16>), // Add fuel, optionally specify the amount to add in liters
+    LF(Option<i16>),   // Change the left front tire, optionally specifying the pressure in KPa
+    RF(Option<i16>),   // right front
+    LR(Option<i16>),   // left rear
+    RR(Option<i16>),   // right rear
+    ClearTires,        // Clear tire pit checkboxes
+    FastRepair,        // FR: Request a fast repair
+    ClearWS,           // Uncheck Clean the winshield checkbox
+    ClearFR,           // Uncheck request a fast repair
+    ClearFuel,         // Uncheck add fuel
 }
-impl PitCommandMode {
-    pub fn msg(&self) -> (i16, isize) {
+impl PitCommand {
+    fn params(&self) -> (i16, isize) {
         match self {
-            PitCommandMode::Clear => (0, 0),
-            PitCommandMode::TearOff => (1, 0),
-            PitCommandMode::Fuel(l) => (2, *l as isize),
-            PitCommandMode::LF(p) => (3, *p as isize),
-            PitCommandMode::RF(p) => (4, *p as isize),
-            PitCommandMode::LR(p) => (5, *p as isize),
-            PitCommandMode::RR(p) => (6, *p as isize),
-            PitCommandMode::ClearTires => (7, 0),
-            PitCommandMode::FastRepair => (8, 0),
-            PitCommandMode::ClearWS => (9, 0),
-            PitCommandMode::ClearFR => (10, 0),
-            PitCommandMode::ClearFuel => (11, 0),
+            PitCommand::Clear => (0, 0),
+            PitCommand::TearOff => (1, 0),
+            PitCommand::Fuel(l) => (2, pit_amt(l)),
+            PitCommand::LF(p) => (3, pit_amt(p)),
+            PitCommand::RF(p) => (4, pit_amt(p)),
+            PitCommand::LR(p) => (5, pit_amt(p)),
+            PitCommand::RR(p) => (6, pit_amt(p)),
+            PitCommand::ClearTires => (7, 0),
+            PitCommand::FastRepair => (8, 0),
+            PitCommand::ClearWS => (9, 0),
+            PitCommand::ClearFR => (10, 0),
+            PitCommand::ClearFuel => (11, 0),
         }
     }
+}
+fn pit_amt(a: &Option<i16>) -> isize {
+    match a {
+        Some(l) => *l as isize,
+        None => 0,
+    }
+}
+
+// You can call this any time, but telemtry only records when driver is in there car
+#[derive(Debug, ToPrimitive)]
+pub enum TelemCommand {
+    Stop = 0, // Turn telemetry recording off
+    Start,    // Turn telemetry recording on
+    Restart,  // Write current file to disk and start a new one
+}
+impl TelemCommand {
+    fn params(&self) -> i16 {
+        self.to_i16().unwrap()
+    }
+}
+
+// You can call this any time
+#[derive(Debug)]
+pub enum FFBCommand {
+    MaxForce(f32), // Set the maximum force when mapping steering torque force to direct input units (float in Nm)
+}
+impl FFBCommand {
+    fn params(&self) -> (i16, isize) {
+        match self {
+            FFBCommand::MaxForce(f) => (0, (*f * 65536.0f32) as isize),
+        }
+    }
+}
+
+#[derive(Debug, ToPrimitive)]
+pub enum VideoCapture {
+    TriggerScreenShot = 0, // save a screenshot to disk
+    Start,                 // start capturing video
+    End,                   // stop capturing video
+    Toggle,                // toggle video capture on/off
+    ShowVideoTimer,        // show video timer in upper left corner of display
+    HideVideoTimer,        // hide video timer
+}
+impl VideoCapture {
+    fn params(&self) -> i16 {
+        self.to_i16().unwrap()
+    }
+}
+fn makelong(var1: i16, var2: i16) -> isize {
+    // aka MAKELONG
+    let x = ((var1 as u32 & 0xFFFFu32) as u32) | (((var2 as u32) & 0xFFFFu32) << 16);
+    x as isize
 }

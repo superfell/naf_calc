@@ -460,7 +460,8 @@ impl IrSessionInfo {
             track_id: wi["TrackID"].as_i64().unwrap(),
             track_display_name: wi["TrackDisplayName"].as_str().unwrap().to_string(),
             track_display_short_name: wi["TrackDisplayShortName"].as_str().unwrap().to_string(),
-            track_config_name: wi["TrackConfigName"].as_str().unwrap().to_string(),
+            // TrackConfigName doesn't appear for tracks that don't have multiple configs
+            track_config_name: wi["TrackConfigName"].as_str().unwrap_or("").to_string(),
             event_type: wi["EventType"].as_str().unwrap().to_string(),
             category: wi["Category"].as_str().unwrap().to_string(),
             driver_car_fuel_max_ltr: di["DriverCarFuelMaxLtr"].as_f64().unwrap(),

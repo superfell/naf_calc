@@ -24,6 +24,9 @@ const IRSDK_MAX_STRING: usize = 32;
 // descriptions can be longer than max_string!
 const IRSDK_MAX_DESC: usize = 64;
 
+// HWND_BROADCAST doesn't appear to be in windows crate?
+const HWND_BROADCAST: HWND = HWND(0xFFFF);
+
 // define markers for unlimited session lap and time
 pub const IRSDK_UNLIMITED_LAPS: i32 = 32767;
 pub const IRSDK_UNLIMITED_TIME: f64 = 604800.0;
@@ -209,27 +212,15 @@ impl Session {
         WINDOWS_1252.decode(bytes, DecoderTrap::Replace).unwrap()
     }
 
-    /// this is all gross AF
-    unsafe fn broadcast_ms(&self, msg: i16, var1: i16, var2: isize) -> Result<(), WIN32_ERROR> {
-        use num::ToPrimitive;
-
-        // HWND_BROADCAST doesn't appear to be in windows crate?
-        let hwnd_bc = HWND(0xFFFF);
-        let x = makelong(var1, msg.to_i16().unwrap());
-        let r = SendNotifyMessageA(hwnd_bc, self.conn.broadcast_msg_id, WPARAM(x), LPARAM(var2));
-
-        if r.as_bool() {
-            Ok(())
-        } else {
-            Err(GetLastError())
-        }
-    }
     pub unsafe fn broadcast_msg(&self, msg: flags::BroadcastMsg) -> Result<(), WIN32_ERROR> {
-        let (msg_id, (var1, var2)) = msg.msg();
-        // HWND_BROADCAST doesn't appear to be in windows crate?
-        let hwnd_bc = HWND(0xFFFF);
-        let x = makelong(msg_id, var1);
-        let r = SendNotifyMessageA(hwnd_bc, self.conn.broadcast_msg_id, WPARAM(x), LPARAM(var2));
+        let (cmd_msg_id, (var1, var2)) = msg.params();
+        let x = makelong(cmd_msg_id, var1);
+        let r = SendNotifyMessageA(
+            HWND_BROADCAST,
+            self.conn.broadcast_msg_id,
+            WPARAM(x),
+            LPARAM(var2),
+        );
         if r.as_bool() {
             Ok(())
         } else {
