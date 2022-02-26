@@ -11,24 +11,10 @@ use std::time::Duration;
 use strat::Rate;
 
 mod calc;
-mod ir;
 mod ircalc;
 mod strat;
 
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
-
-// fn main() {
-//     use crate::ir::flags::{CameraFocus, ChatCommand, FFBCommand, ReplaySearch};
-//     let mut c = ir::Client::new();
-//     unsafe {
-//         let s = c.session().unwrap();
-//         let x = s.broadcast_msg(flags::BroadcastMsg::ReplaySearchSessionTime(
-//             1,
-//             Duration::new(300, 0),
-//         ));
-//         println!("bc message result {:?}", x)
-//     }
-// }
 
 fn main() {
     // describe the main window

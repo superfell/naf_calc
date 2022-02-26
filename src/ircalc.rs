@@ -1,13 +1,14 @@
 #![allow(dead_code)]
 
 use super::calc::{Calculator, RaceConfig};
-use super::ir;
-use super::ir::flags::{Flags, SessionState, TrackLocation};
-use super::ir::DataUpdateResult;
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use std::fmt;
 use std::time::Duration;
+
+use iracing_telem as ir;
+use iracing_telem::flags::{Flags, SessionState, TrackLocation};
+use iracing_telem::DataUpdateResult;
 
 #[derive(Clone, Debug)]
 pub struct ADuration {
