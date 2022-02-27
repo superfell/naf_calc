@@ -344,23 +344,26 @@ struct IRacingTelemetryRow {
     lap_progress: f32,
 }
 impl IRacingTelemetryRow {
-    fn time_remaining(&self) -> Duration {
-        Duration::from_secs_f64(self.session_time_remain.max(0.0))
-    }
     fn ends(&self) -> EndsWith {
+        let (tm, laps) = match self.session_state {
+            SessionState::Warmup | SessionState::ParadeLaps => {
+                (self.session_time_total, self.session_laps_total)
+            }
+            _ => (self.session_time_remain, self.session_laps_remain),
+        };
         // TODO deal with practice better
-        if self.session_time_remain == ir::IRSDK_UNLIMITED_TIME {
-            if self.session_laps_remain == ir::IRSDK_UNLIMITED_LAPS {
+        if tm == ir::IRSDK_UNLIMITED_TIME {
+            if laps == ir::IRSDK_UNLIMITED_LAPS {
                 EndsWith::Time(Duration::from_millis(
                     (30.0 * 60.0 - self.session_time) as u64 * 1000,
                 ))
             } else {
-                EndsWith::Laps(self.session_laps_remain)
+                EndsWith::Laps(laps)
             }
-        } else if self.session_laps_remain == ir::IRSDK_UNLIMITED_LAPS {
-            EndsWith::Time(self.time_remaining())
+        } else if laps == ir::IRSDK_UNLIMITED_LAPS {
+            EndsWith::Time(Duration::from_secs_f64(tm.max(0.0)))
         } else {
-            EndsWith::LapsOrTime(self.session_laps_remain, self.time_remaining())
+            EndsWith::LapsOrTime(laps, Duration::from_secs_f64(tm.max(0.0)))
         }
     }
     fn lap_state(&self) -> LapState {
