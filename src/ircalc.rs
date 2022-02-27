@@ -3,6 +3,7 @@
 use super::calc::{Calculator, RaceConfig};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
+use ir::flags::{BroadcastMsg, PitCommand};
 use std::fmt;
 use std::time::Duration;
 
@@ -153,7 +154,11 @@ impl SessionProgress {
             // reset lap start when we leave the pit box
             self.lap_start = this;
             // show the stratagy if there's one available
+            println!("post pit stop strategry");
             if let Some(x) = self.calc.strat(this.ends()) {
+                println!("post pit stop strategry updated");
+                println!("strat is {:?}", x);
+                println!("current state {:?}", this);
                 strat_to_result(&x, result);
             }
         }
@@ -185,6 +190,34 @@ impl SessionProgress {
             }
             result.fuel_last_lap = new_lap.fuel_used;
             self.lap_start = this;
+        }
+        if this.player_track_surface == TrackLocation::ApproachingPits
+            && self.last.player_track_surface != TrackLocation::ApproachingPits
+        {
+            match self.calc.strat(this.ends()) {
+                None => unsafe {
+                    let _ = self
+                        .ir
+                        .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::Fuel(Some(
+                            self.calc.config().fuel_tank_size.ceil() as i16,
+                        ))));
+                },
+                Some(x) => unsafe {
+                    let total: f32 = x.stints.iter().map(|s| s.fuel).sum();
+                    let add = (total - this.fuel_level + (x.green.fuel * 2.0)).ceil();
+                    if add.is_sign_positive() {
+                        let _ = self
+                            .ir
+                            .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::Fuel(Some(
+                                add as i16,
+                            ))));
+                    } else {
+                        let _ = self
+                            .ir
+                            .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::ClearFuel));
+                    }
+                },
+            }
         }
         // update car status info in result
         result.car.fuel = this.fuel_level;

@@ -61,6 +61,9 @@ impl Calculator {
         c.insert_session().expect("failed to insert session");
         Ok(c)
     }
+    pub fn config(&self) -> RaceConfig {
+        self.cfg.clone()
+    }
     pub fn add_lap(&mut self, l: Lap) {
         self.laps.push(l);
     }
