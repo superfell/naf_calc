@@ -33,7 +33,7 @@ impl fmt::Display for ADuration {
 #[derive(Clone, Debug, Data, Lens)]
 pub struct AmountLeft {
     pub fuel: f32,
-    pub laps: i32,
+    pub laps: f32,
     #[data(same_fn = "PartialEq::eq")]
     pub time: Duration,
 }
@@ -41,7 +41,7 @@ impl Default for AmountLeft {
     fn default() -> Self {
         AmountLeft {
             fuel: 0.0,
-            laps: 0,
+            laps: 0.0,
             time: Duration::ZERO,
         }
     }
@@ -189,12 +189,12 @@ impl SessionProgress {
                 (result.race.fuel - (self.last.fuel_level - this.fuel_level).max(0.0)).max(0.0)
         }
         if result.green.fuel > 0.0 {
-            result.car.laps = f32::floor(this.fuel_level / result.green.fuel) as i32;
+            result.car.laps = this.fuel_level / result.green.fuel;
             result.car.time = Duration::from_secs_f32(
                 this.fuel_level / result.green.fuel * result.green.time.as_secs_f32(),
             );
         } else {
-            result.car.laps = 0;
+            result.car.laps = 0.0;
             result.car.time = Duration::ZERO;
         }
         // update race time/laps left from source, not strat
@@ -204,14 +204,14 @@ impl SessionProgress {
         let dtick = Duration::from_secs_f64(tick);
         match this.ends() {
             EndsWith::Laps(l) => {
-                result.race.laps = l;
+                result.race.laps = l as f32;
                 result.race.time -= Duration::min(result.race.time, dtick);
             }
             EndsWith::Time(d) => {
                 result.race.time = d;
             }
             EndsWith::LapsOrTime(l, d) => {
-                result.race.laps = l;
+                result.race.laps = l as f32;
                 result.race.time = d;
             }
         }
@@ -275,7 +275,7 @@ fn strat_to_result(strat: &Strategy, result: &mut Estimation) {
     }
     result.stops = strat.stops.len() as i32;
     result.green = strat.green;
-    result.race.laps = strat.stints.iter().map(|s| s.laps).sum();
+    result.race.laps = strat.stints.iter().map(|s| s.laps as f32).sum();
     result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
     result.race.time = strat.stints.iter().map(|s| s.time).sum();
     result.save_target = if strat.fuel_to_save <= 0.0 {

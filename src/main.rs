@@ -120,6 +120,7 @@ fn build_root_widget() -> impl Widget<Estimation> {
             String::new()
         }
     };
+    let fmt_lap = |f: &f32, _: &Env| format!("{:.1}", f);
     let fmt_i32 = |f: &i32, _e: &Env| format!("{:}", f);
     let fmt_ps = |f: &Option<strat::Pitstop>, _e: &Env| match f {
         None => "".to_string(),
@@ -160,14 +161,14 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         2,
         1,
-        val(fmt_i32)
+        val(fmt_lap)
             .lens(Estimation::car.then(AmountLeft::laps))
             .border(GRID, GWIDTH)
             .background(COLOR_KEY)
             .env_scope(|env, data| {
                 env.set(
                     COLOR_KEY,
-                    colorer(data.connected, data.car.laps, data.race.laps, 0),
+                    colorer(data.connected, data.car.laps, data.race.laps, 0.0),
                 )
             }),
     );
@@ -200,7 +201,7 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         2,
         2,
-        val(fmt_i32)
+        val(fmt_lap)
             .lens(Estimation::race.then(AmountLeft::laps))
             .border(GRID, GWIDTH),
     );
