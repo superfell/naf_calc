@@ -51,6 +51,8 @@ pub struct Estimation {
     pub connected: bool,            // connected to iracing
     pub car: AmountLeft,            // what's left in the car
     pub race: AmountLeft,           // what's left to go in the race
+    pub race_tm_estimated: bool,    // the race time left is an estimate
+    pub race_laps_estimated: bool,  // the race laps left is an estimate
     pub fuel_last_lap: f32,         // fuel used on the last lap
     pub green: Rate,                // average per lap usage (green flag only)
     pub stops: i32,                 // pitstops needed to finish race
@@ -64,6 +66,8 @@ impl Default for Estimation {
             connected: false,
             car: AmountLeft::default(),
             race: AmountLeft::default(),
+            race_laps_estimated: true,
+            race_tm_estimated: true,
             fuel_last_lap: 0.0,
             green: Rate::default(),
             stops: 0,
@@ -206,13 +210,19 @@ impl SessionProgress {
             EndsWith::Laps(l) => {
                 result.race.laps = l as f32;
                 result.race.time -= Duration::min(result.race.time, dtick);
+                result.race_laps_estimated = false;
+                result.race_tm_estimated = true;
             }
             EndsWith::Time(d) => {
                 result.race.time = d;
+                result.race_laps_estimated = true;
+                result.race_tm_estimated = false;
             }
             EndsWith::LapsOrTime(l, d) => {
                 result.race.laps = l as f32;
                 result.race.time = d;
+                result.race_laps_estimated = false;
+                result.race_tm_estimated = false;
             }
         }
         self.last = this;

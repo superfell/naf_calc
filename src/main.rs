@@ -1,7 +1,7 @@
 use druid::widget::{Align, Label, LabelText, LineBreaking, SizedBox};
 use druid::{
     AppLauncher, BoxConstraints, Color, Data, Env, Event, FontDescriptor, FontFamily, FontWeight,
-    Insets, Key, Point, Size, UnitPoint, Widget, WidgetExt, WidgetPod, WindowDesc,
+    Insets, Key, KeyOrValue, Point, Size, UnitPoint, Widget, WidgetExt, WidgetPod, WindowDesc,
 };
 use druid::{LensExt, TimerToken};
 use ircalc::{AmountLeft, Estimation};
@@ -39,13 +39,18 @@ fn lbl<T: Data>(l: impl Into<LabelText<T>>, align: UnitPoint) -> impl Widget<T> 
             .with_text_color(Color::grey8(200)),
     ))
 }
-fn val<T: Data>(text: impl Into<LabelText<T>>) -> impl Widget<T> {
+fn val<T: Data>(text: impl Into<LabelText<T>>, color: Option<KeyOrValue<Color>>) -> impl Widget<T> {
     let font = FontDescriptor::new(FontFamily::SYSTEM_UI)
         .with_weight(FontWeight::BOLD)
         .with_size(56.0);
-    Align::new(UnitPoint::CENTER, Label::<T>::new(text).with_font(font))
+    let mut lbl = Label::<T>::new(text).with_font(font);
+    if color.is_some() {
+        lbl = lbl.with_text_color(color.unwrap());
+    }
+    Align::new(UnitPoint::CENTER, lbl)
 }
 
+const COLOR_BG_KEY: Key<Color> = Key::new("color-bg-key");
 const COLOR_KEY: Key<Color> = Key::new("color-key");
 const ONE_HR: Duration = Duration::new(60 * 60, 0);
 const COLOR_CLEAR: Color = Color::rgba8(0, 0, 0, 0);
@@ -87,8 +92,10 @@ fn build_root_widget() -> impl Widget<Estimation> {
         })
         .with_line_break_mode(LineBreaking::WordWrap)
         .center()
-        .background(COLOR_KEY)
-        .env_scope(|env, d: &bool| env.set(COLOR_KEY, if *d { COLOR_CLEAR } else { Color::NAVY }))
+        .background(COLOR_BG_KEY)
+        .env_scope(|env, d: &bool| {
+            env.set(COLOR_BG_KEY, if *d { COLOR_CLEAR } else { Color::NAVY })
+        })
         .lens(Estimation::connected)
         .border(GRID, GWIDTH),
     );
@@ -147,13 +154,13 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         1,
         1,
-        val(fmt_f32)
+        val(fmt_f32, None)
             .lens(Estimation::car.then(AmountLeft::fuel))
             .border(GRID, GWIDTH)
-            .background(COLOR_KEY)
+            .background(COLOR_BG_KEY)
             .env_scope(|env, data| {
                 env.set(
-                    COLOR_KEY,
+                    COLOR_BG_KEY,
                     colorer(data.connected, data.car.fuel, data.race.fuel, 1.0),
                 )
             }),
@@ -161,13 +168,13 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         2,
         1,
-        val(fmt_lap)
+        val(fmt_lap, None)
             .lens(Estimation::car.then(AmountLeft::laps))
             .border(GRID, GWIDTH)
-            .background(COLOR_KEY)
+            .background(COLOR_BG_KEY)
             .env_scope(|env, data| {
                 env.set(
-                    COLOR_KEY,
+                    COLOR_BG_KEY,
                     colorer(data.connected, data.car.laps, data.race.laps, 0.0),
                 )
             }),
@@ -175,13 +182,13 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         3,
         1,
-        val(fmt_tm)
+        val(fmt_tm, None)
             .lens(Estimation::car)
             .border(GRID, GWIDTH)
-            .background(COLOR_KEY)
+            .background(COLOR_BG_KEY)
             .env_scope(|env, data| {
                 env.set(
-                    COLOR_KEY,
+                    COLOR_BG_KEY,
                     colorer(
                         data.connected,
                         data.car.time,
@@ -194,26 +201,48 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         1,
         2,
-        val(fmt_f32)
+        val(fmt_f32, None)
             .lens(Estimation::race.then(AmountLeft::fuel))
             .border(GRID, GWIDTH),
     );
     w.set(
         2,
         2,
-        val(fmt_lap)
+        val(fmt_lap, Some(KeyOrValue::Key(COLOR_KEY)))
             .lens(Estimation::race.then(AmountLeft::laps))
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    if data.race_laps_estimated {
+                        Color::grey8(150)
+                    } else {
+                        Color::WHITE
+                    },
+                )
+            }),
     );
     w.set(
         3,
         2,
-        val(fmt_tm).lens(Estimation::race).border(GRID, GWIDTH),
+        val(fmt_tm, Some(KeyOrValue::Key(COLOR_KEY)))
+            .lens(Estimation::race)
+            .border(GRID, GWIDTH)
+            .env_scope(|env, data| {
+                env.set(
+                    COLOR_KEY,
+                    if data.race_tm_estimated {
+                        Color::grey8(150)
+                    } else {
+                        Color::WHITE
+                    },
+                )
+            }),
     );
     w.set(
         1,
         4,
-        val(fmt_f32)
+        val(fmt_f32, None)
             .lens(Estimation::fuel_last_lap)
             .border(GRID, GWIDTH),
     );
@@ -228,14 +257,14 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         3,
         4,
-        val(fmt_f32_blank_zero)
+        val(fmt_f32_blank_zero, None)
             .lens(Estimation::save)
             .border(GRID, GWIDTH),
     );
     w.set(
         1,
         5,
-        val(fmt_f32_blank_zero)
+        val(fmt_f32_blank_zero, None)
             .lens(Estimation::green.then(Rate::fuel))
             .border(GRID, GWIDTH),
     );
@@ -249,13 +278,13 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         3,
         5,
-        val(fmt_f32_blank_zero)
+        val(fmt_f32_blank_zero, None)
             .lens(Estimation::save_target)
             .border(GRID, GWIDTH)
-            .background(COLOR_KEY)
+            .background(COLOR_BG_KEY)
             .env_scope(|env, data| {
                 env.set(
-                    COLOR_KEY,
+                    COLOR_BG_KEY,
                     if data.save_target > 0.0 {
                         if data.fuel_last_lap <= data.save_target {
                             Color::GREEN
@@ -293,12 +322,12 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         1,
         6,
-        val(fmt_ps)
+        val(fmt_ps, None)
             .border(GRID, GWIDTH)
-            .background(COLOR_KEY)
+            .background(COLOR_BG_KEY)
             .env_scope(|env, data| {
                 env.set(
-                    COLOR_KEY,
+                    COLOR_BG_KEY,
                     match data {
                         None => COLOR_CLEAR,
                         Some(ps) => {
@@ -325,7 +354,9 @@ fn build_root_widget() -> impl Widget<Estimation> {
     w.set(
         3,
         6,
-        val(fmt_i32).lens(Estimation::stops).border(GRID, GWIDTH),
+        val(fmt_i32, None)
+            .lens(Estimation::stops)
+            .border(GRID, GWIDTH),
     );
 
     let mut calc = ircalc::Estimator::new();
