@@ -44,8 +44,8 @@ fn val<T: Data>(text: impl Into<LabelText<T>>, color: Option<KeyOrValue<Color>>)
         .with_weight(FontWeight::BOLD)
         .with_size(56.0);
     let mut lbl = Label::<T>::new(text).with_font(font);
-    if color.is_some() {
-        lbl = lbl.with_text_color(color.unwrap());
+    if let Some(c) = color {
+        lbl = lbl.with_text_color(c);
     }
     Align::new(UnitPoint::CENTER, lbl)
 }

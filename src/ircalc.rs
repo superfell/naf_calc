@@ -154,11 +154,7 @@ impl SessionProgress {
             // reset lap start when we leave the pit box
             self.lap_start = this;
             // show the stratagy if there's one available
-            println!("post pit stop strategry");
-            if let Some(x) = self.calc.strat(this.ends()) {
-                println!("post pit stop strategry updated");
-                println!("strat is {:?}", x);
-                println!("current state {:?}", this);
+            if let Some(x) = self.calc.strat(this.fuel_level, this.ends()) {
                 strat_to_result(&x, result);
             }
         }
@@ -168,7 +164,7 @@ impl SessionProgress {
             // reset lap start when the parade lap starts.
             self.lap_start = this;
             // show the stratagy if there's one available
-            if let Some(x) = self.calc.strat(this.ends()) {
+            if let Some(x) = self.calc.strat(this.fuel_level, this.ends()) {
                 strat_to_result(&x, result);
             }
         }
@@ -184,7 +180,7 @@ impl SessionProgress {
                 && this.session_state != SessionState::CoolDown
             {
                 self.calc.add_lap(new_lap);
-                if let Some(strat) = self.calc.strat(this.ends()) {
+                if let Some(strat) = self.calc.strat(this.fuel_level, this.ends()) {
                     strat_to_result(&strat, result)
                 }
             }
@@ -194,7 +190,7 @@ impl SessionProgress {
         if this.player_track_surface == TrackLocation::ApproachingPits
             && self.last.player_track_surface != TrackLocation::ApproachingPits
         {
-            match self.calc.strat(this.ends()) {
+            match self.calc.strat(this.fuel_level, this.ends()) {
                 None => unsafe {
                     let _ = self
                         .ir

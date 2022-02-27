@@ -118,19 +118,12 @@ impl Calculator {
         }
     }
 
-    pub fn strat(&self, ends: EndsWith) -> Option<Strategy> {
+    pub fn strat(&self, fuel_left: f32, ends: EndsWith) -> Option<Strategy> {
         let green = self.recent_green()?;
         let yellow = self.recent_yellow().unwrap_or_else(|| Rate {
-            fuel: green.fuel / 4.0,
+            fuel: green.fuel / 3.0,
             time: green.time * 4,
         });
-        // currently the or to default to a full tank is never triggered because recent_green() will
-        // return None if we haven't done any laps yet. [this will change in the future]
-        let fuel_left = self
-            .laps
-            .last()
-            .map_or(self.cfg.fuel_tank_size, |lap| lap.fuel_left);
-
         let yellow_laps = self
             .laps
             .iter()
@@ -270,7 +263,7 @@ mod tests {
             db_file: None,
         };
         let calc = Calculator::new(cfg).unwrap();
-        let strat = calc.strat(EndsWith::Laps(50));
+        let strat = calc.strat(10.0, EndsWith::Laps(50));
         assert!(strat.is_none());
     }
 
@@ -292,7 +285,7 @@ mod tests {
             time: Duration::new(30, 0),
             condition: LapState::empty(),
         });
-        let strat = calc.strat(EndsWith::Laps(49)).unwrap();
+        let strat = calc.strat(9.5, EndsWith::Laps(49)).unwrap();
         assert_eq!(vec![19, 20, 10], strat.laps());
         assert_eq!(vec![Pitstop::new(9, 19), Pitstop::new(29, 39)], strat.stops);
     }
@@ -316,7 +309,7 @@ mod tests {
             condition: LapState::empty(),
         };
         calc.add_lap(lap);
-        let strat = calc.strat(EndsWith::Laps(49)).unwrap();
+        let strat = calc.strat(9.5, EndsWith::Laps(49)).unwrap();
         assert_eq!(vec![19, 20, 10], strat.laps());
         assert_eq!(vec![Pitstop::new(9, 19), Pitstop::new(29, 39)], strat.stops);
         lap.fuel_left -= 0.5;
@@ -327,7 +320,7 @@ mod tests {
         calc.add_lap(lap);
         lap.fuel_left -= 0.5;
         calc.add_lap(lap);
-        let strat = calc.strat(EndsWith::Laps(45)).unwrap();
+        let strat = calc.strat(7.5, EndsWith::Laps(45)).unwrap();
         assert_eq!(vec![15, 20, 10], strat.laps());
         assert_eq!(vec![Pitstop::new(5, 15), Pitstop::new(25, 35)], strat.stops);
     }
@@ -351,7 +344,7 @@ mod tests {
             condition: LapState::empty(),
         };
         calc.add_lap(lap);
-        let strat = calc.strat(EndsWith::Laps(49)).unwrap();
+        let strat = calc.strat(9.0, EndsWith::Laps(49)).unwrap();
         assert_eq!(vec![9, 10, 10, 10, 10], strat.laps());
 
         lap.fuel_left -= 1.0;
@@ -360,7 +353,7 @@ mod tests {
         calc.add_lap(lap);
         lap.fuel_left -= 1.0;
         calc.add_lap(lap);
-        let strat = calc.strat(EndsWith::Laps(46)).unwrap();
+        let strat = calc.strat(6.0, EndsWith::Laps(46)).unwrap();
         assert_eq!(vec![6, 10, 10, 10, 10], strat.laps());
 
         lap.fuel_left -= 0.5;
@@ -370,7 +363,7 @@ mod tests {
         lap.condition = LapState::YELLOW;
         calc.add_lap(lap);
 
-        let strat = calc.strat(EndsWith::Laps(44)).unwrap();
+        let strat = calc.strat(5.4, EndsWith::Laps(44)).unwrap();
         assert_eq!(vec![5, 10, 10, 10, 9], strat.laps());
     }
 }
