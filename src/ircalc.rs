@@ -260,7 +260,11 @@ impl SessionProgress {
             if this.session_state != SessionState::Checkered
                 && this.session_state != SessionState::CoolDown
             {
-                self.calc.add_lap(new_lap);
+                if new_lap.fuel_used > 0.0 {
+                    // reset to pit, towing etc can end up with have a negative fuel used
+                    // so skip those, they're junk.
+                    self.calc.add_lap(new_lap);
+                }
                 if let Some(strat) = self.calc.strat(this.fuel_level, this.ends()) {
                     strat_to_result(&strat, result)
                 }
