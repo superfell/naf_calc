@@ -253,8 +253,13 @@ impl SessionProgress {
             let new_lap = Lap {
                 fuel_left: this.fuel_level,
                 fuel_used: self.lap_start.fuel_level - this.fuel_level,
-                // TODO, this is not interopolating the lap
-                time: Duration::from_secs_f64(this.session_time - self.lap_start.session_time),
+                time: Self::interpolate_lap_time(
+                    self.last.lap_progress,
+                    self.last.session_time,
+                    this.lap_progress,
+                    this.session_time,
+                    0.0,
+                ),
                 condition: this.lap_state() | self.lap_start.lap_state(),
             };
             if this.session_state != SessionState::Checkered
@@ -342,6 +347,24 @@ impl SessionProgress {
         }
         self.last = this;
         Ok(())
+    }
+    fn interpolate_lap_time(
+        // pos'n and time at the end of the lap
+        mut end_of_lap_pos: f32,
+        end_of_lap_tm: f64,
+        // pos'n and time at the start of the next lap
+        start_of_lap_pos: f32,
+        start_of_lap_tm: f64,
+        check_pos: f32,
+    ) -> Duration {
+        // unwrap if crossing start/finish line
+        //****Note, assumes p1 is a percent from 0 to 1
+        // if that is not true then unwrap the numbers before calling this function
+        if end_of_lap_pos > start_of_lap_pos {
+            end_of_lap_pos -= 1.0;
+        }
+        let pct = ((check_pos - end_of_lap_pos) / (start_of_lap_pos - end_of_lap_pos)) as f64;
+        Duration::from_secs_f64(end_of_lap_tm + ((start_of_lap_tm - end_of_lap_tm) * pct))
     }
 }
 impl Drop for SessionProgress {
@@ -603,5 +626,22 @@ impl IrSessionInfo {
                 .unwrap()
                 .to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionProgress;
+
+    #[test]
+    fn test_interopolate_tm() {
+        let tm = SessionProgress::interpolate_lap_time(0.98, 112.1, 0.02, 112.3, 0.0);
+        assert!(f64::abs(tm.as_secs_f64() - 112.2) < 0.0001);
+
+        let tm2 = SessionProgress::interpolate_lap_time(0.98, 112.1, 0.02, 112.5, 0.0);
+        assert!(f64::abs(tm2.as_secs_f64() - 112.3) < 0.0001);
+
+        let tm3 = SessionProgress::interpolate_lap_time(0.99, 112.1, 0.02, 112.4, 0.0);
+        assert!(f64::abs(tm3.as_secs_f64() - 112.2) < 0.0001);
     }
 }
