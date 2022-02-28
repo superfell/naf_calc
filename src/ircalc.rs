@@ -4,8 +4,11 @@ use super::calc::{Calculator, RaceConfig};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
-use std::fmt;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::PathBuf;
 use std::time::Duration;
+use std::{fmt, io};
 
 use iracing_telem as ir;
 use iracing_telem::flags::{Flags, SessionState, TrackLocation};
@@ -95,21 +98,97 @@ impl From<ir::Error> for Error {
     }
 }
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct UserSettings {
+    /// 0-1 the max percentage fuel saving to consider
+    max_fuel_save: f32,
+    /// cars typically start to stutter around 0.2-0.3L of fuel left
+    /// What's the minimum we should try to keep in it.
+    min_fuel: f32,
+    /// when refueling add enough fuel for this many extra laps.
+    extra_laps: f32,
+}
+impl Default for UserSettings {
+    fn default() -> UserSettings {
+        UserSettings {
+            max_fuel_save: 0.15,
+            min_fuel: 0.2,
+            extra_laps: 2.0,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum JsonLoadError {
+    IOError(io::Error),
+    JsonError(serde_json::Error),
+}
+impl From<io::Error> for JsonLoadError {
+    fn from(e: io::Error) -> Self {
+        JsonLoadError::IOError(e)
+    }
+}
+impl From<serde_json::Error> for JsonLoadError {
+    fn from(e: serde_json::Error) -> Self {
+        JsonLoadError::JsonError(e)
+    }
+}
+impl UserSettings {
+    fn load(path: Option<PathBuf>) -> UserSettings {
+        match path {
+            None => Self::default(),
+            Some(p) => match Self::load_impl(p) {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("Failed to load settings {:?}", e);
+                    Self::default()
+                }
+            },
+        }
+    }
+    fn load_impl(path: PathBuf) -> Result<UserSettings, JsonLoadError> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let r: UserSettings = serde_json::from_reader(reader)?;
+        Ok(r)
+    }
+    fn save(&self, path: Option<PathBuf>) -> Result<(), JsonLoadError> {
+        match path {
+            None => Ok(()),
+            Some(p) => {
+                let file = File::create(p)?;
+                serde_json::to_writer_pretty(file, self)?;
+                Ok(())
+            }
+        }
+    }
+}
+
 // state needed by a running calculator
 struct SessionProgress {
     ir: ir::Session,
     calc: Calculator,
+    settings: UserSettings,
     f: TelemetryFactory,
     last: IRacingTelemetryRow,
     lap_start: IRacingTelemetryRow,
 }
 impl SessionProgress {
     fn new(session: ir::Session) -> Result<SessionProgress, ir::Error> {
+        let settings_filename =
+            dirs_next::document_dir().map(|dir| dir.join("naf_calc\\settings.json"));
+
+        let settings = UserSettings::load(settings_filename.clone());
+        // temp
+        let _ = UserSettings::default().save(settings_filename);
+
         let session_info = IrSessionInfo::parse(unsafe { &session.session_info() }, 0);
         let cfg = RaceConfig {
             fuel_tank_size: (session_info.driver_car_fuel_max_ltr
                 * session_info.driver_car_max_fuel_pct) as f32,
-            max_fuel_save: 0.1,
+            max_fuel_save: settings.max_fuel_save,
             track_id: session_info.track_id,
             track_name: session_info.track_display_name,
             layout_name: session_info.track_config_name,
@@ -120,9 +199,10 @@ impl SessionProgress {
         let f = TelemetryFactory::new(&session);
         let last = f.read(&session)?;
         Ok(SessionProgress {
-            calc,
-            f,
             ir: session,
+            calc,
+            settings,
+            f,
             last,
             lap_start: last,
         })
@@ -200,7 +280,8 @@ impl SessionProgress {
                 },
                 Some(x) => unsafe {
                     let total: f32 = x.stints.iter().map(|s| s.fuel).sum();
-                    let add = (total - this.fuel_level + (x.green.fuel * 2.0)).ceil();
+                    let add = (total - this.fuel_level + (x.green.fuel * self.settings.extra_laps))
+                        .ceil();
                     if add.is_sign_positive() {
                         let _ = self
                             .ir

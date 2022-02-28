@@ -16,3 +16,5 @@ yaml-rust = "0.4"
 dirs-next = "2.0.0"
 druid = "0.7.0"
 iracing-telem = { version= "0.1", path = "../iracing-telem" }
+serde_json = "1.0.79"
+serde = { version = "1.0", features = ["derive"] }
