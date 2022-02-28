@@ -11,6 +11,7 @@ use std::{cmp, path::PathBuf, time::Duration};
 pub struct RaceConfig {
     pub fuel_tank_size: f32,
     pub max_fuel_save: f32,
+    pub min_fuel: f32,
     pub track_id: i64,
     pub track_name: String,
     pub layout_name: String,
@@ -134,6 +135,7 @@ impl Calculator {
             fuel_left,
             tank_size: self.cfg.fuel_tank_size,
             max_fuel_save: self.cfg.max_fuel_save,
+            min_fuel: self.cfg.min_fuel,
             // a yellow flag is usually at least 3 laps.
             // TODO, can we detect the 2/1 togo state from iRacing?
             yellow_togo: if yellow_laps > 0 {
@@ -256,6 +258,7 @@ mod tests {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             track_id: 1,
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
@@ -272,6 +275,7 @@ mod tests {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             track_id: 1,
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
@@ -295,6 +299,7 @@ mod tests {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             track_id: 1,
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
@@ -330,6 +335,7 @@ mod tests {
         let cfg = RaceConfig {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             track_id: 1,
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),

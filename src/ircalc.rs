@@ -189,6 +189,7 @@ impl SessionProgress {
             fuel_tank_size: (session_info.driver_car_fuel_max_ltr
                 * session_info.driver_car_max_fuel_pct) as f32,
             max_fuel_save: settings.max_fuel_save,
+            min_fuel: settings.min_fuel,
             track_id: session_info.track_id,
             track_name: session_info.track_display_name,
             layout_name: session_info.track_config_name,

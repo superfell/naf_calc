@@ -149,6 +149,7 @@ pub struct StratRequest {
     pub fuel_left: f32,
     pub tank_size: f32,
     pub max_fuel_save: f32,
+    pub min_fuel: f32,
     pub yellow_togo: i32,
     pub ends: EndsWith, // for a laps race, EndsWith laps is total laps to go, regardless of yellow/green.
     pub green: Rate,
@@ -197,7 +198,7 @@ impl StratRequest {
         let mut f = self.fuel_left;
         let mut stint = Stint::new();
         for lap in laps {
-            if f < lap.fuel {
+            if f < lap.fuel + self.min_fuel {
                 stints.push(stint);
                 stint = Stint::new();
                 f = self.tank_size;
@@ -272,6 +273,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 20.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(5),
             green: Rate { fuel: 0.5, time: d },
@@ -289,6 +291,7 @@ mod tests {
             fuel_left: 20.0,
             tank_size: 20.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Time(Duration::new(105, 0)),
             green: Rate { fuel: 0.5, time: d },
@@ -305,6 +308,7 @@ mod tests {
             fuel_left: 0.9,
             tank_size: 20.0,
             max_fuel_save: 0.1,
+            min_fuel: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(0),
             green: Rate { fuel: 0.5, time: d },
@@ -321,6 +325,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(34),
             green: Rate { fuel: 0.5, time: d },
@@ -338,6 +343,7 @@ mod tests {
             fuel_left: 5.0,
             tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 2,
             ends: EndsWith::Time(Duration::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
@@ -367,6 +373,7 @@ mod tests {
             fuel_left: 5.0,
             tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 2,
             ends: EndsWith::LapsOrTime(100, Duration::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
@@ -396,6 +403,7 @@ mod tests {
             fuel_left: 5.0,
             tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 2,
             ends: EndsWith::LapsOrTime(10, Duration::new(3000, 0)),
             green: Rate { fuel: 1.0, time: d },
@@ -416,6 +424,7 @@ mod tests {
             fuel_left: 9.5,
             tank_size: 10.0,
             max_fuel_save: 0.0,
+            min_fuel: 0.0,
             yellow_togo: 3,
             ends: EndsWith::Laps(23),
             green: Rate { fuel: 0.5, time: d },
@@ -435,6 +444,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.3,
             tank_size: 10.0,
+            min_fuel: 0.0,
             max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(49),
@@ -452,6 +462,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.3,
             tank_size: 10.0,
+            min_fuel: 0.0,
             max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(24),
@@ -469,6 +480,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 1.5,
             tank_size: 10.0,
+            min_fuel: 0.0,
             max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(29),
@@ -486,6 +498,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.6,
             tank_size: 10.0,
+            min_fuel: 0.0,
             max_fuel_save: 0.0,
             yellow_togo: 0,
             ends: EndsWith::Laps(58),
@@ -503,6 +516,7 @@ mod tests {
         let r = StratRequest {
             fuel_left: 9.0,
             tank_size: 20.0,
+            min_fuel: 0.0,
             max_fuel_save: 0.1, //10%
             yellow_togo: 0,
             ends: EndsWith::Laps(50),
