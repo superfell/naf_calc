@@ -109,6 +109,8 @@ struct UserSettings {
     min_fuel: f32,
     /// when refueling add enough fuel for this many extra laps.
     extra_laps: f32,
+    /// always clear tires when setting pitstop options.
+    clear_tires: bool,
 }
 impl Default for UserSettings {
     fn default() -> UserSettings {
@@ -116,6 +118,7 @@ impl Default for UserSettings {
             max_fuel_save: 0.15,
             min_fuel: 0.2,
             extra_laps: 2.0,
+            clear_tires: true,
         }
     }
 }
@@ -280,6 +283,13 @@ impl SessionProgress {
         if this.player_track_surface == TrackLocation::ApproachingPits
             && self.last.player_track_surface != TrackLocation::ApproachingPits
         {
+            if self.settings.clear_tires {
+                unsafe {
+                    let _ = self
+                        .ir
+                        .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::ClearTires));
+                }
+            }
             match self.calc.strat(this.fuel_level, this.ends()) {
                 None => unsafe {
                     let _ = self
