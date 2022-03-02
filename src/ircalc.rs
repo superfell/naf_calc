@@ -256,13 +256,13 @@ impl SessionProgress {
             let new_lap = Lap {
                 fuel_left: this.fuel_level,
                 fuel_used: self.lap_start.fuel_level - this.fuel_level,
-                time: Self::interpolate_lap_time(
+                time: Self::interpolate_checkpoint_time(
                     self.last.lap_progress,
                     self.last.session_time,
                     this.lap_progress,
                     this.session_time,
                     0.0,
-                ),
+                ) - Duration::from_secs_f64(self.lap_start.session_time),
                 condition: this.lap_state() | self.lap_start.lap_state(),
             };
             if this.session_state != SessionState::Checkered
@@ -358,7 +358,7 @@ impl SessionProgress {
         self.last = this;
         Ok(())
     }
-    fn interpolate_lap_time(
+    fn interpolate_checkpoint_time(
         // pos'n and time at the end of the lap
         mut end_of_lap_pos: f32,
         end_of_lap_tm: f64,
@@ -645,13 +645,13 @@ mod tests {
 
     #[test]
     fn test_interopolate_tm() {
-        let tm = SessionProgress::interpolate_lap_time(0.98, 112.1, 0.02, 112.3, 0.0);
+        let tm = SessionProgress::interpolate_checkpoint_time(0.98, 112.1, 0.02, 112.3, 0.0);
         assert!(f64::abs(tm.as_secs_f64() - 112.2) < 0.0001);
 
-        let tm2 = SessionProgress::interpolate_lap_time(0.98, 112.1, 0.02, 112.5, 0.0);
+        let tm2 = SessionProgress::interpolate_checkpoint_time(0.98, 112.1, 0.02, 112.5, 0.0);
         assert!(f64::abs(tm2.as_secs_f64() - 112.3) < 0.0001);
 
-        let tm3 = SessionProgress::interpolate_lap_time(0.99, 112.1, 0.02, 112.4, 0.0);
+        let tm3 = SessionProgress::interpolate_checkpoint_time(0.99, 112.1, 0.02, 112.4, 0.0);
         assert!(f64::abs(tm3.as_secs_f64() - 112.2) < 0.0001);
     }
 }
