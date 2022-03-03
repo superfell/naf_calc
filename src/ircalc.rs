@@ -4,9 +4,12 @@ use super::calc::{Calculator, RaceConfig};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
+use regex::Regex;
 use std::fs::File;
 use std::io::BufReader;
+
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::Duration;
 use std::{fmt, io};
 
@@ -17,6 +20,39 @@ use iracing_telem::DataUpdateResult;
 #[derive(Clone, Debug)]
 pub struct ADuration {
     d: Duration,
+}
+impl ADuration {
+    pub fn new(secs: u64, nanos: u32) -> ADuration {
+        ADuration {
+            d: Duration::new(secs, nanos),
+        }
+    }
+}
+use lazy_static::lazy_static;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ParseError {
+    Empty,
+    Bogus,
+}
+
+impl FromStr for ADuration {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        lazy_static! {
+            static ref DURATION_REGEX: Regex =
+                Regex::new(r"^\s*(?:(\d{1,2}):)??(\d{2}):(\d{2})\s*$").unwrap();
+        }
+        match DURATION_REGEX.captures(s) {
+            None => Err(ParseError::Empty),
+            Some(cap) => {
+                let secs = cap.get(3).map_or(0, |m| u64::from_str(m.as_str()).unwrap());
+                let mins = cap.get(2).map_or(0, |m| u64::from_str(m.as_str()).unwrap()) * 60;
+                let hours = cap.get(1).map_or(0, |m| u64::from_str(m.as_str()).unwrap()) * 60 * 60;
+                Ok(ADuration::new(secs + mins + hours, 0))
+            }
+        }
+    }
 }
 impl Data for ADuration {
     fn same(&self, other: &Self) -> bool {
@@ -641,8 +677,11 @@ impl IrSessionInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::SessionProgress;
+    use std::str::FromStr;
 
+    use crate::ircalc::ADuration;
+
+    use super::SessionProgress;
     #[test]
     fn test_interopolate_tm() {
         let tm = SessionProgress::interpolate_checkpoint_time(0.98, 112.1, 0.02, 112.3, 0.0);
@@ -653,5 +692,19 @@ mod tests {
 
         let tm3 = SessionProgress::interpolate_checkpoint_time(0.99, 112.1, 0.02, 112.4, 0.0);
         assert!(f64::abs(tm3.as_secs_f64() - 112.2) < 0.0001);
+    }
+
+    #[test]
+    fn test_dur_parse() {
+        assert_eq!(ADuration::from_str("00:10").unwrap().d.as_secs(), 10);
+        assert_eq!(ADuration::from_str("05:10").unwrap().d.as_secs(), 310);
+        assert_eq!(ADuration::from_str("01:05:10").unwrap().d.as_secs(), 3910);
+        assert_eq!(ADuration::from_str(" 05:10 ").unwrap().d.as_secs(), 310);
+        assert_eq!(
+            ADuration::from_str("    01:05:10 ").unwrap().d.as_secs(),
+            3910
+        );
+        assert!(ADuration::from_str("").is_err());
+        assert!(ADuration::from_str("bob").is_err());
     }
 }
