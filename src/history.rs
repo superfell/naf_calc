@@ -5,7 +5,11 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, Error};
 
 use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy};
-use std::{cmp, path::PathBuf, time::Duration};
+use std::{
+    cmp, error,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 #[derive(Clone, Debug)]
 pub struct RaceConfig {
@@ -16,7 +20,7 @@ pub struct RaceConfig {
     pub track_name: String,
     pub layout_name: String,
     pub car_id: i64,
-    pub db_file: Option<PathBuf>,
+    pub car: String,
 }
 
 pub struct History {
@@ -26,29 +30,15 @@ pub struct History {
     def_green: Option<Rate>,
     def_yellow: Option<Rate>,
 }
-struct Db {
-    con_mgr: SqliteConnectionManager,
-    con: Connection,
-    laps_written: usize,
-    id: Option<i64>,
+pub struct Session {
+    pub car_id: i64,
+    pub track_id: i64,
+    pub car: String,
+    pub track: String,
 }
 impl History {
-    pub fn new(cfg: RaceConfig) -> Result<History, Error> {
-        let db = match &cfg.db_file {
-            None => Ok(None),
-            Some(f) => {
-                let c = r2d2_sqlite::SqliteConnectionManager::file(f);
-                let con = c.connect();
-                con.map(|con| {
-                    Some(Db {
-                        con_mgr: c,
-                        con,
-                        laps_written: 0,
-                        id: None,
-                    })
-                })
-            }
-        }?;
+    pub fn new(cfg: RaceConfig, db_file: Option<PathBuf>) -> Result<History, Error> {
+        let db = db_file.map(|f| Db::new(&f).ok()).flatten();
         let mut c = History {
             cfg,
             laps: Vec::with_capacity(16),
@@ -56,10 +46,17 @@ impl History {
             def_green: None,
             def_yellow: None,
         };
-        c.init_schema()?;
-        c.def_green = c.db_green_laps();
-        c.def_yellow = c.db_yellow_laps();
-        c.insert_session().expect("failed to insert session");
+        c.def_green =
+            c.db.as_ref()
+                .map(|db| db.db_green_laps(c.cfg.car_id, c.cfg.track_id))
+                .flatten();
+        c.def_yellow =
+            c.db.as_ref()
+                .map(|db| db.db_yellow_laps(c.cfg.car_id, c.cfg.track_id))
+                .flatten();
+        if let Some(db) = c.db.as_mut() {
+            db.insert_session(&c.cfg).expect("failed to insert session");
+        }
         Ok(c)
     }
     pub fn config(&self) -> RaceConfig {
@@ -67,6 +64,13 @@ impl History {
     }
     pub fn add_lap(&mut self, l: Lap) {
         self.laps.push(l);
+    }
+    pub fn save_laps(&mut self) -> Result<(), Error> {
+        if let Some(db) = self.db.as_mut() {
+            db.save_laps(&self.laps)
+        } else {
+            Ok(())
+        }
     }
     // calculates a green lap fuel/time estimate from recently completed green laps. If there are no
     // laps available will default to data from previous sessions if available.
@@ -149,10 +153,29 @@ impl History {
         };
         r.compute()
     }
+}
+pub struct Db {
+    con_mgr: SqliteConnectionManager,
+    con: Connection,
+    laps_written: usize,
+    id: Option<i64>,
+}
+
+impl Db {
+    pub fn new(f: &Path) -> Result<Db, impl error::Error> {
+        let c = r2d2_sqlite::SqliteConnectionManager::file(f);
+        let con = c.connect();
+        let x = con.map(|con| Db {
+            con_mgr: c,
+            con,
+            laps_written: 0,
+            id: None,
+        })?;
+        x.init_schema().map(|()| x)
+    }
 
     fn init_schema(&self) -> Result<(), Error> {
-        if let Some(db) = &self.db {
-            let s = "CREATE TABLE IF NOT EXISTS Session(
+        let s = "CREATE TABLE IF NOT EXISTS Session(
                                 id              integer  primary key,
                                 time            text,
                                 car_id          int,
@@ -161,8 +184,13 @@ impl History {
                                 track_layout    text,
                                 tank_size       float,
                                 max_fuel_save   float)";
-            db.con.execute(s, [])?;
-            let s = "CREATE TABLE IF NOT EXISTS Lap(
+        self.con.execute(s, [])?;
+        let s = "ALTER TABLE Session ADD COLUMN car text DEFAULT ''";
+        let _ = self.con.execute(s, []);
+        let s = "ALTER TABLE Session ADD COLUMN min_fuel float DEFAULT 0.2";
+        let _ = self.con.execute(s, []);
+
+        let s = "CREATE TABLE IF NOT EXISTS Lap(
                                 id              integer primary key,
                                 session         integer references session(id),
                                 time            text,
@@ -171,77 +199,66 @@ impl History {
                                 lap_time        float,
                                 condition       int,
                                 condition_str   text)";
-            db.con.execute(s, [])?;
-        }
+        self.con.execute(s, [])?;
         Ok(())
     }
-    fn insert_session(&mut self) -> Result<(), Error> {
-        if let Some(db) = &mut self.db {
-            let mut stmt = db.con.prepare("INSERT INTO Session(time,car_id,track_id,track_name,track_layout,tank_size,max_fuel_save) 
-                VALUES(datetime('now'),?,?,?,?,?,?)")?;
-            let c = &self.cfg;
-            let id = stmt.insert(params![
-                c.car_id,
-                c.track_id,
-                c.track_name,
-                c.layout_name,
-                c.fuel_tank_size,
-                c.max_fuel_save,
-            ])?;
-            db.id = Some(id);
-        }
+    fn insert_session(&mut self, c: &RaceConfig) -> Result<(), Error> {
+        let mut stmt = self.con.prepare("INSERT INTO Session(time,car_id,car,track_id,track_name,track_layout,tank_size,max_fuel_save,min_fuel) 
+            VALUES(datetime('now'),?,?,?,?,?,?,?,?)")?;
+        let id = stmt.insert(params![
+            c.car_id,
+            c.car,
+            c.track_id,
+            c.track_name,
+            c.layout_name,
+            c.fuel_tank_size,
+            c.max_fuel_save,
+            c.min_fuel,
+        ])?;
+        self.id = Some(id);
         Ok(())
     }
-    pub fn save_laps(&mut self) -> Result<(), Error> {
-        if let Some(db) = &mut self.db {
-            let tx = db.con.transaction()?;
-            {
-                let mut stmt = tx.prepare(
-                    "INSERT INTO Lap(session,time,fuel_used,fuel_left,lap_time,condition,condition_str)
-                    VALUES (?,datetime('now'),?,?,?,?,?)",
-                )?;
-                for l in self.laps[db.laps_written..].iter() {
-                    stmt.insert(params![
-                        db.id.unwrap(),
-                        l.fuel_used,
-                        l.fuel_left,
-                        l.time.as_secs_f64(),
-                        l.condition.bits(),
-                        format!("{:?}", l.condition),
-                    ])?;
-                }
+    pub fn save_laps(&mut self, laps: &[Lap]) -> Result<(), Error> {
+        let tx = self.con.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO Lap(session,time,fuel_used,fuel_left,lap_time,condition,condition_str)
+                VALUES (?,datetime('now'),?,?,?,?,?)",
+            )?;
+            for l in laps[self.laps_written..].iter() {
+                stmt.insert(params![
+                    self.id.unwrap(),
+                    l.fuel_used,
+                    l.fuel_left,
+                    l.time.as_secs_f64(),
+                    l.condition.bits(),
+                    format!("{:?}", l.condition),
+                ])?;
             }
-            tx.commit()?;
-            db.laps_written = self.laps.len();
         }
+        tx.commit()?;
+        self.laps_written += laps.len();
         Ok(())
     }
-    fn db_green_laps(&self) -> Option<Rate> {
-        self.db_laps(LapState::empty().bits())
+    fn db_green_laps(&self, car_id: i64, track_id: i64) -> Option<Rate> {
+        self.db_laps(car_id, track_id, LapState::empty().bits())
     }
-    fn db_yellow_laps(&self) -> Option<Rate> {
-        self.db_laps(LapState::YELLOW.bits())
+    fn db_yellow_laps(&self, car_id: i64, track_id: i64) -> Option<Rate> {
+        self.db_laps(car_id, track_id, LapState::YELLOW.bits())
     }
-    fn db_laps(&self, cond: i32) -> Option<Rate> {
-        self.db.as_ref().map(|db| {
-            let q_avg = "select avg(fuel_used) as f, avg(lap_time) as t from  (
-                                select l.fuel_used,l.lap_time from lap l inner join session s on l.session=s.id 
-                                where s.car_id=? and s.track_id=? and l.condition=? order by l.id desc limit 5)";
-            let x= db.con.query_row(q_avg, params![self.cfg.car_id,self.cfg.track_id,cond], |row| Ok(Rate{
-                fuel: row.get("f")?,
-                time: Duration::from_secs_f64(row.get("t")?),
-            }));
-            match x {
-                Err(e) => {
-                    println!("db query error {}",e);
-                    None
-                }
-                Ok(r) => {
-                    println!("rate from db {} {:?} for condition {}", r.fuel, r.time, cond);
-                    Some(r)
-                }
-            }
-        }).flatten()
+    fn db_laps(&self, car_id: i64, track_id: i64, cond: i32) -> Option<Rate> {
+        let q_avg = "select avg(fuel_used) as f, avg(lap_time) as t from  (
+                            select l.fuel_used,l.lap_time from lap l inner join session s on l.session=s.id 
+                            where s.car_id=? and s.track_id=? and l.condition=? order by l.id desc limit 5)";
+        let x = self
+            .con
+            .query_row(q_avg, params![car_id, track_id, cond], |row| {
+                Ok(Rate {
+                    fuel: row.get("f")?,
+                    time: Duration::from_secs_f64(row.get("t")?),
+                })
+            });
+        x.ok()
     }
 }
 
@@ -263,9 +280,9 @@ mod tests {
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
             car_id: 1,
-            db_file: None,
+            car: "PM 18".to_string(),
         };
-        let calc = History::new(cfg).unwrap();
+        let calc = History::new(cfg, None).unwrap();
         let strat = calc.strat(10.0, EndsWith::Laps(50));
         assert!(strat.is_none());
     }
@@ -280,9 +297,9 @@ mod tests {
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
             car_id: 1,
-            db_file: None,
+            car: "PM 18".to_string(),
         };
-        let mut calc = History::new(cfg).unwrap();
+        let mut calc = History::new(cfg, None).unwrap();
         calc.add_lap(Lap {
             fuel_left: 9.5,
             fuel_used: 0.5,
@@ -304,9 +321,9 @@ mod tests {
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
             car_id: 1,
-            db_file: None,
+            car: "PM 18".to_string(),
         };
-        let mut calc = History::new(cfg).unwrap();
+        let mut calc = History::new(cfg, None).unwrap();
         let mut lap = Lap {
             fuel_left: 9.5,
             fuel_used: 0.5,
@@ -340,9 +357,9 @@ mod tests {
             track_name: "Test".to_string(),
             layout_name: "Oval".to_string(),
             car_id: 1,
-            db_file: None,
+            car: "PM 18".to_string(),
         };
-        let mut calc = History::new(cfg).unwrap();
+        let mut calc = History::new(cfg, None).unwrap();
         let mut lap = Lap {
             fuel_left: 9.0,
             fuel_used: 1.0,

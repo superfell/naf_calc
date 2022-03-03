@@ -233,9 +233,10 @@ impl SessionProgress {
             track_name: session_info.track_display_name,
             layout_name: session_info.track_config_name,
             car_id: session_info.car_id,
-            db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
+            car: session_info.car_name,
         };
-        let calc = History::new(cfg).unwrap();
+        let db_file = dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db"));
+        let calc = History::new(cfg, db_file).unwrap();
         let f = TelemetryFactory::new(&session);
         let last = f.read(&session)?;
         Ok(SessionProgress {
@@ -260,7 +261,7 @@ impl SessionProgress {
         if this.session_time < self.last.session_time {
             // If the session time goes backwards then we've moved between
             // different sessions inside a single race, e.g. practice -> qualy
-            self.calc.save_laps().unwrap(); //TODO
+            self.calc.save_laps().unwrap(); // TODO
             self.last = this;
             self.lap_start = this;
         }
@@ -415,7 +416,7 @@ impl SessionProgress {
 }
 impl Drop for SessionProgress {
     fn drop(&mut self) {
-        self.calc.save_laps().unwrap(); //TODO
+        let _ = self.calc.save_laps(); //TODO
     }
 }
 impl Estimator {
