@@ -10,7 +10,7 @@ use std::ops::Add;
 use std::time::Duration;
 use strat::Rate;
 
-mod calc;
+mod history;
 mod ircalc;
 mod strat;
 

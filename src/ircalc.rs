@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::calc::{History, RaceConfig};
+use super::history::{History, RaceConfig};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
