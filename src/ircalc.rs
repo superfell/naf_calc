@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::calc::{Calculator, RaceConfig};
+use super::calc::{History, RaceConfig};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
@@ -208,7 +208,7 @@ impl UserSettings {
 // state needed by a running calculator
 struct SessionProgress {
     ir: ir::Session,
-    calc: Calculator,
+    calc: History,
     settings: UserSettings,
     f: TelemetryFactory,
     last: IRacingTelemetryRow,
@@ -235,7 +235,7 @@ impl SessionProgress {
             car_id: session_info.car_id,
             db_file: dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db")),
         };
-        let calc = Calculator::new(cfg).unwrap();
+        let calc = History::new(cfg).unwrap();
         let f = TelemetryFactory::new(&session);
         let last = f.read(&session)?;
         Ok(SessionProgress {

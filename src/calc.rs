@@ -19,7 +19,7 @@ pub struct RaceConfig {
     pub db_file: Option<PathBuf>,
 }
 
-pub struct Calculator {
+pub struct History {
     cfg: RaceConfig,
     laps: Vec<Lap>,
     db: Option<Db>,
@@ -32,8 +32,8 @@ struct Db {
     laps_written: usize,
     id: Option<i64>,
 }
-impl Calculator {
-    pub fn new(cfg: RaceConfig) -> Result<Calculator, Error> {
+impl History {
+    pub fn new(cfg: RaceConfig) -> Result<History, Error> {
         let db = match &cfg.db_file {
             None => Ok(None),
             Some(f) => {
@@ -49,7 +49,7 @@ impl Calculator {
                 })
             }
         }?;
-        let mut c = Calculator {
+        let mut c = History {
             cfg,
             laps: Vec::with_capacity(16),
             db,
@@ -265,7 +265,7 @@ mod tests {
             car_id: 1,
             db_file: None,
         };
-        let calc = Calculator::new(cfg).unwrap();
+        let calc = History::new(cfg).unwrap();
         let strat = calc.strat(10.0, EndsWith::Laps(50));
         assert!(strat.is_none());
     }
@@ -282,7 +282,7 @@ mod tests {
             car_id: 1,
             db_file: None,
         };
-        let mut calc = Calculator::new(cfg).unwrap();
+        let mut calc = History::new(cfg).unwrap();
         calc.add_lap(Lap {
             fuel_left: 9.5,
             fuel_used: 0.5,
@@ -306,7 +306,7 @@ mod tests {
             car_id: 1,
             db_file: None,
         };
-        let mut calc = Calculator::new(cfg).unwrap();
+        let mut calc = History::new(cfg).unwrap();
         let mut lap = Lap {
             fuel_left: 9.5,
             fuel_used: 0.5,
@@ -342,7 +342,7 @@ mod tests {
             car_id: 1,
             db_file: None,
         };
-        let mut calc = Calculator::new(cfg).unwrap();
+        let mut calc = History::new(cfg).unwrap();
         let mut lap = Lap {
             fuel_left: 9.0,
             fuel_used: 1.0,
