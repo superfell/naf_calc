@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::history::{History, RaceConfig};
+use super::history::{History, RaceSession};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
@@ -224,7 +224,7 @@ impl SessionProgress {
         let _ = UserSettings::default().save(settings_filename);
 
         let session_info = IrSessionInfo::parse(unsafe { &session.session_info() }, 0);
-        let cfg = RaceConfig {
+        let cfg = RaceSession {
             fuel_tank_size: (session_info.driver_car_fuel_max_ltr
                 * session_info.driver_car_max_fuel_pct) as f32,
             max_fuel_save: settings.max_fuel_save,

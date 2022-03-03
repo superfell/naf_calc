@@ -12,7 +12,7 @@ use std::{
 };
 
 #[derive(Clone, Debug)]
-pub struct RaceConfig {
+pub struct RaceSession {
     pub fuel_tank_size: f32,
     pub max_fuel_save: f32,
     pub min_fuel: f32,
@@ -24,20 +24,15 @@ pub struct RaceConfig {
 }
 
 pub struct History {
-    cfg: RaceConfig,
+    cfg: RaceSession,
     laps: Vec<Lap>,
     db: Option<Db>,
     def_green: Option<Rate>,
     def_yellow: Option<Rate>,
 }
-pub struct Session {
-    pub car_id: i64,
-    pub track_id: i64,
-    pub car: String,
-    pub track: String,
-}
+
 impl History {
-    pub fn new(cfg: RaceConfig, db_file: Option<PathBuf>) -> Result<History, Error> {
+    pub fn new(cfg: RaceSession, db_file: Option<PathBuf>) -> Result<History, Error> {
         let db = db_file.map(|f| Db::new(&f).ok()).flatten();
         let mut c = History {
             cfg,
@@ -59,7 +54,7 @@ impl History {
         }
         Ok(c)
     }
-    pub fn config(&self) -> RaceConfig {
+    pub fn config(&self) -> RaceSession {
         self.cfg.clone()
     }
     pub fn add_lap(&mut self, l: Lap) {
@@ -202,7 +197,7 @@ impl Db {
         self.con.execute(s, [])?;
         Ok(())
     }
-    fn insert_session(&mut self, c: &RaceConfig) -> Result<(), Error> {
+    fn insert_session(&mut self, c: &RaceSession) -> Result<(), Error> {
         let mut stmt = self.con.prepare("INSERT INTO Session(time,car_id,car,track_id,track_name,track_layout,tank_size,max_fuel_save,min_fuel) 
             VALUES(datetime('now'),?,?,?,?,?,?,?,?)")?;
         let id = stmt.insert(params![
@@ -272,7 +267,7 @@ mod tests {
     fn no_laps() {
         // Note in the future a previously calc/saved green rate would be loaded
         // and this would generate a starting strategy
-        let cfg = RaceConfig {
+        let cfg = RaceSession {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
@@ -289,7 +284,7 @@ mod tests {
 
     #[test]
     fn one_lap() {
-        let cfg = RaceConfig {
+        let cfg = RaceSession {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
@@ -313,7 +308,7 @@ mod tests {
 
     #[test]
     fn five_laps() {
-        let cfg = RaceConfig {
+        let cfg = RaceSession {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
@@ -349,7 +344,7 @@ mod tests {
 
     #[test]
     fn yellow() {
-        let cfg = RaceConfig {
+        let cfg = RaceSession {
             fuel_tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
