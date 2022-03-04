@@ -4,97 +4,16 @@ use super::history::{History, RaceSession};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
-use regex::Regex;
 use std::fs::File;
 use std::io::BufReader;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Duration;
 use std::{fmt, io};
 
 use iracing_telem as ir;
 use iracing_telem::flags::{Flags, SessionState, TrackLocation};
 use iracing_telem::DataUpdateResult;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TimeSpan {
-    d: Duration,
-}
-impl TimeSpan {
-    pub fn of(d: Duration) -> TimeSpan {
-        TimeSpan { d }
-    }
-    pub fn new(secs: u64, nanos: u32) -> TimeSpan {
-        TimeSpan {
-            d: Duration::new(secs, nanos),
-        }
-    }
-}
-impl From<TimeSpan> for Duration {
-    fn from(a: TimeSpan) -> Self {
-        a.d
-    }
-}
-impl From<&TimeSpan> for Duration {
-    fn from(a: &TimeSpan) -> Self {
-        a.d
-    }
-}
-use lazy_static::lazy_static;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ParseError {
-    Empty,
-    Bogus,
-}
-
-impl FromStr for TimeSpan {
-    type Err = ParseError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        lazy_static! {
-            static ref DURATION_REGEX: Regex =
-                Regex::new(r"^\s*(?:(\d{1,2}):)??(\d{2}):(\d{2})\s*$").unwrap();
-        }
-        match DURATION_REGEX.captures(s) {
-            None => Err(ParseError::Empty),
-            Some(cap) => {
-                let secs = cap.get(3).map_or(0, |m| u64::from_str(m.as_str()).unwrap());
-                let mins = cap.get(2).map_or(0, |m| u64::from_str(m.as_str()).unwrap()) * 60;
-                let hours = cap.get(1).map_or(0, |m| u64::from_str(m.as_str()).unwrap()) * 60 * 60;
-                Ok(TimeSpan::new(secs + mins + hours, 0))
-            }
-        }
-    }
-}
-impl Data for TimeSpan {
-    fn same(&self, other: &Self) -> bool {
-        self.d == other.d
-    }
-}
-
-const ONE_HR: Duration = Duration::new(60 * 60, 0);
-
-impl fmt::Display for TimeSpan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.d >= ONE_HR {
-            write!(
-                f,
-                "{:}:{:02}:{:02}",
-                self.d.as_secs() / 3600,
-                (self.d.as_secs() % 3600) / 60,
-                self.d.as_secs() % 60
-            )
-        } else {
-            write!(
-                f,
-                "{:02}:{:02}",
-                self.d.as_secs() / 60,
-                self.d.as_secs() % 60
-            )
-        }
-    }
-}
 
 #[derive(Clone, Debug, Data, Lens)]
 pub struct AmountLeft {
@@ -701,11 +620,8 @@ impl IrSessionInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, time::Duration};
-
-    use crate::ircalc::TimeSpan;
-
     use super::SessionProgress;
+
     #[test]
     fn test_interopolate_tm() {
         let tm = SessionProgress::interpolate_checkpoint_time(0.98, 112.1, 0.02, 112.3, 0.0);
@@ -716,32 +632,5 @@ mod tests {
 
         let tm3 = SessionProgress::interpolate_checkpoint_time(0.99, 112.1, 0.02, 112.4, 0.0);
         assert!(f64::abs(tm3.as_secs_f64() - 112.2) < 0.0001);
-    }
-
-    #[test]
-    fn test_dur_parse() {
-        assert_eq!(TimeSpan::from_str("00:10").unwrap().d.as_secs(), 10);
-        assert_eq!(TimeSpan::from_str("05:10").unwrap().d.as_secs(), 310);
-        assert_eq!(TimeSpan::from_str("01:05:10").unwrap().d.as_secs(), 3910);
-        assert_eq!(TimeSpan::from_str(" 05:10 ").unwrap().d.as_secs(), 310);
-        assert_eq!(
-            TimeSpan::from_str("    01:05:10 ").unwrap().d.as_secs(),
-            3910
-        );
-        assert!(TimeSpan::from_str("").is_err());
-        assert!(TimeSpan::from_str("bob").is_err());
-    }
-
-    #[test]
-    fn test_dur_display() {
-        assert_eq!(format!("{}", TimeSpan::of(Duration::ZERO)), "00:00");
-        assert_eq!(format!("{}", TimeSpan::new(5, 0)), "00:05");
-        assert_eq!(format!("{}", TimeSpan::new(35, 0)), "00:35");
-        assert_eq!(format!("{}", TimeSpan::new(59, 0)), "00:59");
-        assert_eq!(format!("{}", TimeSpan::new(60, 0)), "01:00");
-        assert_eq!(format!("{}", TimeSpan::new(65, 0)), "01:05");
-        assert_eq!(format!("{}", TimeSpan::new(60 * 59, 0)), "59:00");
-        assert_eq!(format!("{}", TimeSpan::new(3600, 0)), "1:00:00");
-        assert_eq!(format!("{}", TimeSpan::new(3600 * 5 + 5, 0)), "5:00:05");
     }
 }
