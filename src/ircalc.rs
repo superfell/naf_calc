@@ -72,14 +72,27 @@ impl Data for ADuration {
         self.d == other.d
     }
 }
+
+const ONE_HR: Duration = Duration::new(60 * 60, 0);
+
 impl fmt::Display for ADuration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:02}:{:02}",
-            self.d.as_secs() / 60,
-            self.d.as_secs() % 60
-        )
+        if self.d >= ONE_HR {
+            write!(
+                f,
+                "{:}:{:02}:{:02}",
+                self.d.as_secs() / 3600,
+                (self.d.as_secs() % 3600) / 60,
+                self.d.as_secs() % 60
+            )
+        } else {
+            write!(
+                f,
+                "{:02}:{:02}",
+                self.d.as_secs() / 60,
+                self.d.as_secs() % 60
+            )
+        }
     }
 }
 
@@ -353,10 +366,10 @@ impl SessionProgress {
                         ))));
                 },
                 Some(x) => unsafe {
-                    let total: f32 = x.stints.iter().map(|s| s.fuel).sum();
+                    let total: f32 = x.total_fuel();
                     let add = (total - this.fuel_level + (x.green.fuel * self.settings.extra_laps))
                         .ceil();
-                    if add.is_sign_positive() {
+                    if add > 0.0 {
                         let _ = self
                             .ir
                             .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::Fuel(Some(
@@ -386,8 +399,6 @@ impl SessionProgress {
             result.car.time = Duration::ZERO;
         }
         // update race time/laps left from source, not strat
-        // TODO during parade laps show race total time/laps not the parade time numbers.
-        // this also needs feeding into the strat() calls.
         let tick = this.session_time - self.last.session_time;
         let dtick = Duration::from_secs_f64(tick);
         match this.ends() {
@@ -487,15 +498,10 @@ fn strat_to_result(strat: &Strategy, result: &mut Estimation) {
     }
     result.stops = strat.stops.len() as i32;
     result.green = strat.green;
-    result.race.laps = strat.stints.iter().map(|s| s.laps as f32).sum();
-    result.race.fuel = strat.stints.iter().map(|s| s.fuel).sum();
-    result.race.time = strat.stints.iter().map(|s| s.time).sum();
-    result.save_target = if strat.fuel_to_save <= 0.0 {
-        0.0
-    } else {
-        let laps_til_last_stop: i32 = strat.stints.iter().rev().skip(1).map(|s| s.laps).sum();
-        strat.fuel_to_save / (laps_til_last_stop as f32)
-    }
+    result.race.laps = strat.total_laps() as f32;
+    result.race.fuel = strat.total_fuel();
+    result.race.time = strat.total_time();
+    result.save_target = strat.fuel_target();
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -527,8 +533,8 @@ impl IRacingTelemetryRow {
         // TODO deal with practice better
         if tm == ir::IRSDK_UNLIMITED_TIME {
             if laps == ir::IRSDK_UNLIMITED_LAPS {
-                EndsWith::Time(Duration::from_millis(
-                    (30.0 * 60.0 - self.session_time) as u64 * 1000,
+                EndsWith::Time(Duration::from_secs_f64(
+                    (30.0 * 60.0 - self.session_time).max(0.0),
                 ))
             } else {
                 EndsWith::Laps(laps)
@@ -695,7 +701,7 @@ impl IrSessionInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{str::FromStr, time::Duration};
 
     use crate::ircalc::ADuration;
 
@@ -724,5 +730,18 @@ mod tests {
         );
         assert!(ADuration::from_str("").is_err());
         assert!(ADuration::from_str("bob").is_err());
+    }
+
+    #[test]
+    fn test_dur_display() {
+        assert_eq!(format!("{}", ADuration::of(Duration::ZERO)), "00:00");
+        assert_eq!(format!("{}", ADuration::new(5, 0)), "00:05");
+        assert_eq!(format!("{}", ADuration::new(35, 0)), "00:35");
+        assert_eq!(format!("{}", ADuration::new(59, 0)), "00:59");
+        assert_eq!(format!("{}", ADuration::new(60, 0)), "01:00");
+        assert_eq!(format!("{}", ADuration::new(65, 0)), "01:05");
+        assert_eq!(format!("{}", ADuration::new(60 * 59, 0)), "59:00");
+        assert_eq!(format!("{}", ADuration::new(3600, 0)), "1:00:00");
+        assert_eq!(format!("{}", ADuration::new(3600 * 5 + 5, 0)), "5:00:05");
     }
 }

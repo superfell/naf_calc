@@ -97,7 +97,7 @@ fn val<T: Data>(text: impl Into<LabelText<T>>, color: Option<KeyOrValue<Color>>)
 
 const COLOR_BG_KEY: Key<Color> = Key::new("color-bg-key");
 const COLOR_KEY: Key<Color> = Key::new("color-key");
-const ONE_HR: Duration = Duration::new(60 * 60, 0);
+
 const COLOR_CLEAR: Color = Color::rgba8(0, 0, 0, 0);
 
 fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
@@ -184,18 +184,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
             }
         }
     };
-    let fmt_tm = |f: &AmountLeft, _e: &Env| {
-        if f.time >= ONE_HR {
-            format!(
-                "{:}:{:02}:{:02}",
-                f.time.as_secs() / 3600,
-                (f.time.as_secs() % 3600) / 60,
-                f.time.as_secs() % 60
-            )
-        } else {
-            format!("{:02}:{:02}", f.time.as_secs() / 60, f.time.as_secs() % 60)
-        }
-    };
+    let fmt_tm = |f: &AmountLeft, _e: &Env| format!("{}", ircalc::ADuration::of(f.time));
     w.set(
         1,
         1,

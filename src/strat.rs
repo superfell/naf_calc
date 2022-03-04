@@ -136,6 +136,24 @@ impl Strategy {
     pub fn laps(&self) -> Vec<i32> {
         self.stints.iter().map(|s| s.laps).collect()
     }
+    pub fn total_laps(&self) -> i32 {
+        self.stints.iter().map(|s| s.laps).sum()
+    }
+    pub fn total_fuel(&self) -> f32 {
+        self.stints.iter().map(|s| s.fuel).sum()
+    }
+    pub fn total_time(&self) -> Duration {
+        self.stints.iter().map(|s| s.time).sum()
+    }
+    pub fn fuel_target(&self) -> f32 {
+        if self.fuel_to_save > 0.0 {
+            let laps_til_last_stop: i32 = self.stints.iter().rev().skip(1).map(|s| s.laps).sum();
+            if laps_til_last_stop > 0 {
+                return self.fuel_to_save / (laps_til_last_stop as f32);
+            }
+        }
+        0.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
