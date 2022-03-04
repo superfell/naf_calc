@@ -17,15 +17,28 @@ use iracing_telem as ir;
 use iracing_telem::flags::{Flags, SessionState, TrackLocation};
 use iracing_telem::DataUpdateResult;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ADuration {
     d: Duration,
 }
 impl ADuration {
+    pub fn of(d: Duration) -> ADuration {
+        ADuration { d }
+    }
     pub fn new(secs: u64, nanos: u32) -> ADuration {
         ADuration {
             d: Duration::new(secs, nanos),
         }
+    }
+}
+impl From<ADuration> for Duration {
+    fn from(a: ADuration) -> Self {
+        a.d
+    }
+}
+impl From<&ADuration> for Duration {
+    fn from(a: &ADuration) -> Self {
+        a.d
     }
 }
 use lazy_static::lazy_static;
@@ -86,6 +99,7 @@ impl Default for AmountLeft {
         }
     }
 }
+
 #[derive(Clone, Debug, Data, Lens)]
 pub struct Estimation {
     pub connected: bool,            // connected to iracing
@@ -205,6 +219,10 @@ impl UserSettings {
     }
 }
 
+pub fn default_laps_db() -> Option<PathBuf> {
+    dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db"))
+}
+
 // state needed by a running calculator
 struct SessionProgress {
     ir: ir::Session,
@@ -235,8 +253,7 @@ impl SessionProgress {
             car_id: session_info.car_id,
             car: session_info.car_name,
         };
-        let db_file = dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db"));
-        let calc = History::new(cfg, db_file).unwrap();
+        let calc = History::new(cfg, default_laps_db()).unwrap();
         let f = TelemetryFactory::new(&session);
         let last = f.read(&session)?;
         Ok(SessionProgress {

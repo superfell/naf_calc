@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use druid::{Data, Lens};
 use r2d2::ManageConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, Error};
@@ -11,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Data, Lens, PartialEq)]
 pub struct RaceSession {
     pub fuel_tank_size: f32,
     pub max_fuel_save: f32,
@@ -21,6 +22,15 @@ pub struct RaceSession {
     pub layout_name: String,
     pub car_id: i64,
     pub car: String,
+}
+impl RaceSession {
+    pub fn car_track(&self) -> String {
+        if self.layout_name.is_empty() {
+            format!("{} @ {}", self.car, self.track_name)
+        } else {
+            format!("{} @ {} {}", self.car, self.track_name, self.layout_name)
+        }
+    }
 }
 
 pub struct History {
@@ -235,10 +245,33 @@ impl Db {
         self.laps_written += laps.len();
         Ok(())
     }
-    fn db_green_laps(&self, car_id: i64, track_id: i64) -> Option<Rate> {
+    /// returns the most recent session with enough green flag laps for each car/track/layout combo we know about
+    pub fn sessions(&self) -> Result<Vec<RaceSession>, impl error::Error> {
+        let q = "select * from session where id in (
+            select max(s.id) from session s inner join lap l on s.id = l.session
+            where l.condition = 0
+            group by s.car_id, s.track_id
+            having count(l.id) > 3) order by id desc
+        ";
+        let mut stmt = self.con.prepare(q)?;
+        let rows = stmt.query_map([], |row| {
+            Ok(RaceSession {
+                fuel_tank_size: row.get("tank_size")?,
+                max_fuel_save: row.get("max_fuel_save")?,
+                min_fuel: row.get("min_fuel")?,
+                track_id: row.get("track_id")?,
+                track_name: row.get("track_name")?,
+                layout_name: row.get("track_layout")?,
+                car_id: row.get("car_id")?,
+                car: row.get("car")?,
+            })
+        })?;
+        rows.collect()
+    }
+    pub fn db_green_laps(&self, car_id: i64, track_id: i64) -> Option<Rate> {
         self.db_laps(car_id, track_id, LapState::empty().bits())
     }
-    fn db_yellow_laps(&self, car_id: i64, track_id: i64) -> Option<Rate> {
+    pub fn db_yellow_laps(&self, car_id: i64, track_id: i64) -> Option<Rate> {
         self.db_laps(car_id, track_id, LapState::YELLOW.bits())
     }
     fn db_laps(&self, car_id: i64, track_id: i64, cond: i32) -> Option<Rate> {

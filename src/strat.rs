@@ -73,7 +73,7 @@ impl fmt::Display for Pitstop {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stint {
     pub laps: i32,
     pub fuel: f32,
@@ -113,7 +113,7 @@ impl fmt::Display for Stint {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Strategy {
     pub stints: Vec<Stint>,
     pub stops: Vec<Pitstop>,
@@ -138,13 +138,14 @@ impl Strategy {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EndsWith {
     Laps(i32),                 // race ends after this many more laps
     Time(Duration),            // race ends after this much more time
     LapsOrTime(i32, Duration), // first of the above 2 to happen
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct StratRequest {
     pub fuel_left: f32,
     pub tank_size: f32,

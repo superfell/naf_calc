@@ -1,14 +1,21 @@
-use druid::widget::{Align, Label, LabelText, LineBreaking, SizedBox};
+use druid::piet::{Text, TextLayout, TextLayoutBuilder};
+use druid::widget::{
+    Align, Flex, Label, LabelText, LineBreaking, Painter, Parse, SizedBox, TextBox, ViewSwitcher,
+};
 use druid::{
     AppLauncher, BoxConstraints, Color, Data, Env, Event, FontDescriptor, FontFamily, FontWeight,
-    Insets, Key, KeyOrValue, Point, Size, UnitPoint, Widget, WidgetExt, WidgetPod, WindowDesc,
+    Insets, Key, KeyOrValue, Lens, PaintCtx, Point, Rect, RenderContext, Size, UnitPoint, Widget,
+    WidgetExt, WidgetPod, WindowDesc,
 };
 use druid::{LensExt, TimerToken};
+use druid_widget_nursery::DropdownSelect;
+use history::RaceSession;
 use ircalc::{AmountLeft, Estimation};
 use std::marker::PhantomData;
 use std::ops::Add;
+
 use std::time::Duration;
-use strat::Rate;
+use strat::{EndsWith, Rate, StratRequest};
 
 mod history;
 mod ircalc;
@@ -18,17 +25,55 @@ static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() {
     // describe the main window
-    let main_window = WindowDesc::new(build_root_widget)
+    let main_window = WindowDesc::new(build_root_widget())
         .title("naf calc")
         .window_size((900.0, 480.0));
 
+    let sessions = history::Db::new(&ircalc::default_laps_db().unwrap())
+        .unwrap()
+        .sessions()
+        .unwrap();
     // create the initial app state
-    let initial_state = ircalc::Estimation::default();
+    let mut initial_state = UiState {
+        offline: OfflineState {
+            session: sessions[0].clone(),
+            green: None,
+            yellow: None,
+            laps: None,
+            time: Some(ircalc::ADuration::new(50 * 60, 0)),
+            fuel_tank_size: Some(sessions[0].fuel_tank_size),
+            max_fuel_save: Some(sessions[0].max_fuel_save),
+            strat: None,
+        },
+        online: ircalc::Estimation::default(),
+    };
+    initial_state.offline.on_session_change();
+    initial_state.offline.recalc();
 
     // start the application
     AppLauncher::with_window(main_window)
         .launch(initial_state)
         .expect("Failed to launch application");
+}
+
+fn build_root_widget() -> impl Widget<UiState> {
+    let mut calc = ircalc::Estimator::new();
+    let vs = ViewSwitcher::new(
+        |v: &UiState, _env: &Env| v.online.connected,
+        |active: &bool, _v: &UiState, _env: &Env| {
+            if *active {
+                build_active_dash().lens(UiState::online).boxed()
+            } else {
+                build_offline_widget().boxed()
+            }
+        },
+    );
+    TimerWidget {
+        on_fire: move |d: &mut UiState| calc.update(&mut d.online),
+        timer_id: TimerToken::INVALID,
+        widget: vs,
+        p: PhantomData,
+    }
 }
 
 fn lbl<T: Data>(l: impl Into<LabelText<T>>, align: UnitPoint) -> impl Widget<T> {
@@ -72,7 +117,7 @@ fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
     }
 }
 
-fn build_root_widget() -> impl Widget<Estimation> {
+fn build_active_dash() -> impl Widget<Estimation> {
     const GRID: Color = Color::GRAY;
     const GWIDTH: f64 = 1.0;
     let mut w = GridWidget::new(4, 7);
@@ -358,13 +403,246 @@ fn build_root_widget() -> impl Widget<Estimation> {
             .lens(Estimation::stops)
             .border(GRID, GWIDTH),
     );
+    w
+}
 
-    let mut calc = ircalc::Estimator::new();
-    TimerWidget {
-        on_fire: move |d| calc.update(d),
-        timer_id: TimerToken::INVALID,
-        widget: w,
-        p: PhantomData,
+#[derive(Data, Lens, Debug, Clone)]
+struct UiState {
+    offline: OfflineState,
+    online: Estimation,
+}
+#[derive(Data, Lens, Clone, Debug, PartialEq)]
+struct OfflineState {
+    session: RaceSession,
+    green: Option<Rate>,
+    yellow: Option<Rate>,
+    laps: Option<i32>,
+    time: Option<ircalc::ADuration>,
+    fuel_tank_size: Option<f32>,
+    max_fuel_save: Option<f32>,
+    #[data(same_fn = "PartialEq::eq")]
+    strat: Option<strat::Strategy>,
+}
+impl OfflineState {
+    fn on_session_change(&mut self) {
+        self.fuel_tank_size = Some(self.session.fuel_tank_size);
+        self.max_fuel_save = Some(self.session.max_fuel_save);
+        let _ = history::Db::new(&ircalc::default_laps_db().unwrap()).map(|db| {
+            self.green = db.db_green_laps(self.session.car_id, self.session.track_id);
+            self.yellow = db.db_yellow_laps(self.session.car_id, self.session.track_id);
+        });
+    }
+    fn recalc(&mut self) {
+        if self.fuel_tank_size.is_some()
+            && self.max_fuel_save.is_some()
+            && (self.laps.is_some() || self.time.is_some())
+            && self.green.is_some()
+            && self.fuel_tank_size.unwrap() > 0.0
+        {
+            let r = StratRequest {
+                fuel_left: self.fuel_tank_size.unwrap(),
+                tank_size: self.fuel_tank_size.unwrap(),
+                max_fuel_save: self.max_fuel_save.unwrap(),
+                min_fuel: self.session.min_fuel,
+                yellow_togo: 0,
+                ends: match (self.laps, &self.time) {
+                    (Some(l), None) => EndsWith::Laps(l),
+                    (None, Some(t)) => EndsWith::Time(t.into()),
+                    (Some(l), Some(t)) => EndsWith::LapsOrTime(l, t.into()),
+                    (None, None) => todo!(),
+                },
+                green: self.green.unwrap(),
+                yellow: Rate::default(),
+            };
+            self.strat = r.compute();
+            println!("new strat {:?}", self.strat);
+        }
+    }
+}
+
+fn build_offline_widget() -> impl Widget<UiState> {
+    let sessions = history::Db::new(&ircalc::default_laps_db().unwrap())
+        .map(|db| db.sessions())
+        .unwrap()
+        .unwrap();
+    let mut grid = GridWidget::new(2, 7);
+    grid.set_col_width(0, 200.0);
+    for (i, l) in [
+        "Car / Track",
+        "Green",
+        "Yellow",
+        "Laps",
+        "Time",
+        "Fuel Tank Size",
+        "Max Save",
+    ]
+    .iter()
+    .enumerate()
+    {
+        grid.set(
+            0,
+            i,
+            Label::new(*l)
+                .with_text_size(24.0)
+                .align_right()
+                .padding(Insets::new(0.0, 0.0, 3.0, 0.0)),
+        );
+    }
+    grid.set(
+        1,
+        0,
+        DropdownSelect::new(sessions.into_iter().map(|s| (s.car_track(), s)))
+            .align_left()
+            .lens(OfflineState::session),
+    );
+    let fmt_rate = |r: &Option<strat::Rate>, _e: &Env| match r {
+        Some(r) => format!("{:.2}L / {:.2}s per lap", r.fuel, r.time.as_secs_f64()),
+        None => "".to_string(),
+    };
+    grid.set(
+        1,
+        1,
+        lbl(fmt_rate, UnitPoint::LEFT).lens(OfflineState::green),
+    );
+    grid.set(
+        1,
+        2,
+        lbl(fmt_rate, UnitPoint::LEFT).lens(OfflineState::yellow),
+    );
+    grid.set(
+        1,
+        3,
+        Parse::new(TextBox::new().align_left()).lens(OfflineState::laps),
+    );
+    grid.set(
+        1,
+        4,
+        Parse::new(TextBox::new().align_left()).lens(OfflineState::time),
+    );
+    grid.set(
+        1,
+        5,
+        Parse::new(TextBox::new().align_left()).lens(OfflineState::fuel_tank_size),
+    );
+    grid.set(
+        1,
+        6,
+        Parse::new(TextBox::new().align_left()).lens(OfflineState::max_fuel_save),
+    );
+    let strat = Painter::new(|ctx: &mut PaintCtx, data: &OfflineState, _env: &Env| {
+        fn draw_lap_num(ctx: &mut PaintCtx, lap: i32, pos: Point) {
+            let t = ctx
+                .text()
+                .new_text_layout(format!("{}", lap))
+                .text_color(Color::WHITE)
+                .build()
+                .unwrap();
+            let sz = t.size();
+            let fixed_pos = Point::new(pos.x - (sz.width / 2.0), pos.y);
+            ctx.draw_text(&t, fixed_pos);
+        }
+        let mut bounds = ctx.size().to_rect();
+        bounds = bounds.inset(Insets::new(-50.0, -20.0, -50.0, -20.0));
+        bounds.y0 = bounds.y1 + 10.0;
+        ctx.fill(bounds, &Color::GREEN);
+        ctx.stroke(bounds, &Color::GRAY, 1.0);
+        draw_lap_num(ctx, 0, Point::new(bounds.x0, bounds.y0 - 40.0));
+        if let Some(s) = &data.strat {
+            let laps: i32 = s.stints.iter().map(|s| s.laps).sum();
+            draw_lap_num(ctx, laps, Point::new(bounds.x1, bounds.y0 - 40.0));
+            let l64 = laps as f64;
+            for stop in &s.stops {
+                let b = Rect::new(
+                    bounds.width() / l64 * (stop.open as f64) + bounds.x0,
+                    bounds.y0 - 20.0,
+                    bounds.width() / l64 * (stop.close as f64) + bounds.x0,
+                    bounds.y0,
+                );
+                ctx.fill(b, &Color::rgb8(0, 64, 0));
+                ctx.stroke(bounds, &Color::grey8(220), 1.0);
+                draw_lap_num(ctx, stop.open, Point::new(b.x0, b.y0 - 20.0));
+                draw_lap_num(ctx, stop.close, Point::new(b.x1, b.y0 - 20.0));
+            }
+        }
+    });
+    Flex::column()
+        .with_default_spacer()
+        .with_flex_child(grid, 4.0)
+        .with_default_spacer()
+        .with_flex_child(
+            Label::new(|d: &OfflineState, _: &Env| match &d.strat {
+                None => "".to_string(),
+                Some(s) => match s.stints.first() {
+                    None => format!(
+                        "{} stop{}",
+                        s.stops.len(),
+                        if s.stops.len() == 1 { "" } else { "s" }
+                    ),
+                    Some(stint) => format!(
+                        "{} stop{}. Green flag stint is {} laps / {} time",
+                        s.stops.len(),
+                        if s.stops.len() == 1 { "" } else { "s" },
+                        stint.laps,
+                        ircalc::ADuration::of(stint.time)
+                    ),
+                },
+            })
+            .with_text_size(24.0),
+            1.0,
+        )
+        .with_flex_child(strat, 1.0)
+        .with_flex_child(
+            Label::new(|d: &OfflineState, _: &Env| {
+                if let Some(s) = &d.strat {
+                    if s.fuel_to_save > 0.0 {
+                        return format!("Save {:.2}L total to save a pit stop", s.fuel_to_save);
+                    }
+                }
+                "".into()
+            })
+            .with_text_size(24.0),
+            1.0,
+        )
+        .lens(OfflineStateLens {})
+        .lens(UiState::offline)
+}
+
+struct OfflineStateLens {}
+
+impl Lens<OfflineState, OfflineState> for OfflineStateLens {
+    /// Get non-mut access to the field.
+    ///
+    /// Runs the supplied closure with a reference to the data. It's
+    /// structured this way, as opposed to simply returning a reference,
+    /// so that the data might be synthesized on-the-fly by the lens.
+    fn with<V, F: FnOnce(&OfflineState) -> V>(&self, data: &OfflineState, f: F) -> V {
+        f(data)
+    }
+
+    /// Get mutable access to the field.
+    ///
+    /// This method is defined in terms of a closure, rather than simply
+    /// yielding a mutable reference, because it is intended to be used
+    /// with value-type data (also known as immutable data structures).
+    /// For example, a lens for an immutable list might be implemented by
+    /// cloning the list, giving the closure mutable access to the clone,
+    /// then updating the reference after the closure returns.
+    fn with_mut<V, F: FnOnce(&mut OfflineState) -> V>(&self, data: &mut OfflineState, f: F) -> V {
+        //println!("with_mut {:?}", data);
+        let start = data.clone();
+        let res = f(data);
+        let mut dirty = false;
+        if data.session != start.session {
+            data.on_session_change();
+            dirty = true;
+        }
+        if !dirty && *data != start {
+            dirty = true;
+        }
+        if dirty {
+            data.recalc();
+        }
+        res
     }
 }
 
