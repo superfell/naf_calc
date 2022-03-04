@@ -184,7 +184,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
             }
         }
     };
-    let fmt_tm = |f: &AmountLeft, _e: &Env| format!("{}", TimeSpan::of(f.time));
+    let fmt_tm = |f: &AmountLeft, _e: &Env| format!("{}", f.time);
     w.set(
         1,
         1,
@@ -227,7 +227,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
                         data.connected,
                         data.car.time,
                         data.race.time,
-                        Duration::ZERO,
+                        TimeSpan::ZERO,
                     ),
                 )
             }),
@@ -436,8 +436,8 @@ impl OfflineState {
                 yellow_togo: 0,
                 ends: match (self.laps, &self.time) {
                     (Some(l), None) => EndsWith::Laps(l),
-                    (None, Some(t)) => EndsWith::Time(t.into()),
-                    (Some(l), Some(t)) => EndsWith::LapsOrTime(l, t.into()),
+                    (None, Some(t)) => EndsWith::Time(*t),
+                    (Some(l), Some(t)) => EndsWith::LapsOrTime(l, *t),
                     (None, None) => todo!(),
                 },
                 green: self.green.unwrap(),
@@ -572,7 +572,7 @@ fn build_offline_widget() -> impl Widget<UiState> {
                         s.stops.len(),
                         if s.stops.len() == 1 { "" } else { "s" },
                         stint.laps,
-                        TimeSpan::of(stint.time)
+                        stint.time
                     ),
                 },
             })

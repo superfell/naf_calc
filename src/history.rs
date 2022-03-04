@@ -5,11 +5,10 @@ use r2d2::ManageConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, Error};
 
-use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy};
+use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy, TimeSpan};
 use std::{
     cmp, error,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 #[derive(Clone, Debug, Data, Lens, PartialEq)]
@@ -283,7 +282,7 @@ impl Db {
             .query_row(q_avg, params![car_id, track_id, cond], |row| {
                 Ok(Rate {
                     fuel: row.get("f")?,
-                    time: Duration::from_secs_f64(row.get("t")?),
+                    time: TimeSpan::from_secs_f64(row.get("t")?),
                 })
             });
         x.ok()
@@ -294,7 +293,6 @@ impl Db {
 mod tests {
     use super::super::strat::Pitstop;
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn no_laps() {
@@ -331,7 +329,7 @@ mod tests {
         calc.add_lap(Lap {
             fuel_left: 9.5,
             fuel_used: 0.5,
-            time: Duration::new(30, 0),
+            time: TimeSpan::new(30, 0),
             condition: LapState::empty(),
         });
         let strat = calc.strat(9.5, EndsWith::Laps(49)).unwrap();
@@ -355,7 +353,7 @@ mod tests {
         let mut lap = Lap {
             fuel_left: 9.5,
             fuel_used: 0.5,
-            time: Duration::new(30, 0),
+            time: TimeSpan::new(30, 0),
             condition: LapState::empty(),
         };
         calc.add_lap(lap);
@@ -391,7 +389,7 @@ mod tests {
         let mut lap = Lap {
             fuel_left: 9.0,
             fuel_used: 1.0,
-            time: Duration::new(30, 0),
+            time: TimeSpan::new(30, 0),
             condition: LapState::empty(),
         };
         calc.add_lap(lap);

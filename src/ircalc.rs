@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 
 use super::history::{History, RaceSession};
-use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy};
+use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy, TimeSpan};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
 use std::fs::File;
 use std::io::BufReader;
 
 use std::path::PathBuf;
-use std::time::Duration;
+
 use std::{fmt, io};
 
 use iracing_telem as ir;
@@ -19,15 +19,14 @@ use iracing_telem::DataUpdateResult;
 pub struct AmountLeft {
     pub fuel: f32,
     pub laps: f32,
-    #[data(same_fn = "PartialEq::eq")]
-    pub time: Duration,
+    pub time: TimeSpan,
 }
 impl Default for AmountLeft {
     fn default() -> Self {
         AmountLeft {
             fuel: 0.0,
             laps: 0.0,
-            time: Duration::ZERO,
+            time: TimeSpan::ZERO,
         }
     }
 }
@@ -248,7 +247,7 @@ impl SessionProgress {
                     this.lap_progress,
                     this.session_time,
                     0.0,
-                ) - Duration::from_secs_f64(self.lap_start.session_time),
+                ) - TimeSpan::from_secs_f64(self.lap_start.session_time),
                 condition: this.lap_state() | self.lap_start.lap_state(),
             };
             if this.session_state != SessionState::Checkered
@@ -310,20 +309,20 @@ impl SessionProgress {
         }
         if result.green.fuel > 0.0 {
             result.car.laps = this.fuel_level / result.green.fuel;
-            result.car.time = Duration::from_secs_f32(
+            result.car.time = TimeSpan::from_secs_f32(
                 this.fuel_level / result.green.fuel * result.green.time.as_secs_f32(),
             );
         } else {
             result.car.laps = 0.0;
-            result.car.time = Duration::ZERO;
+            result.car.time = TimeSpan::ZERO;
         }
         // update race time/laps left from source, not strat
         let tick = this.session_time - self.last.session_time;
-        let dtick = Duration::from_secs_f64(tick);
+        let dtick = TimeSpan::from_secs_f64(tick);
         match this.ends() {
             EndsWith::Laps(l) => {
                 result.race.laps = l as f32;
-                result.race.time -= Duration::min(result.race.time, dtick);
+                result.race.time -= result.race.time.min(dtick);
                 result.race_laps_estimated = false;
                 result.race_tm_estimated = true;
             }
@@ -350,7 +349,7 @@ impl SessionProgress {
         start_of_lap_pos: f32,
         start_of_lap_tm: f64,
         check_pos: f32,
-    ) -> Duration {
+    ) -> TimeSpan {
         // unwrap if crossing start/finish line
         //****Note, assumes p1 is a percent from 0 to 1
         // if that is not true then unwrap the numbers before calling this function
@@ -358,7 +357,7 @@ impl SessionProgress {
             end_of_lap_pos -= 1.0;
         }
         let pct = ((check_pos - end_of_lap_pos) / (start_of_lap_pos - end_of_lap_pos)) as f64;
-        Duration::from_secs_f64(end_of_lap_tm + ((start_of_lap_tm - end_of_lap_tm) * pct))
+        TimeSpan::from_secs_f64(end_of_lap_tm + ((start_of_lap_tm - end_of_lap_tm) * pct))
     }
 }
 impl Drop for SessionProgress {
@@ -452,16 +451,16 @@ impl IRacingTelemetryRow {
         // TODO deal with practice better
         if tm == ir::IRSDK_UNLIMITED_TIME {
             if laps == ir::IRSDK_UNLIMITED_LAPS {
-                EndsWith::Time(Duration::from_secs_f64(
+                EndsWith::Time(TimeSpan::from_secs_f64(
                     (30.0 * 60.0 - self.session_time).max(0.0),
                 ))
             } else {
                 EndsWith::Laps(laps)
             }
         } else if laps == ir::IRSDK_UNLIMITED_LAPS {
-            EndsWith::Time(Duration::from_secs_f64(tm.max(0.0)))
+            EndsWith::Time(TimeSpan::from_secs_f64(tm.max(0.0)))
         } else {
-            EndsWith::LapsOrTime(laps, Duration::from_secs_f64(tm.max(0.0)))
+            EndsWith::LapsOrTime(laps, TimeSpan::from_secs_f64(tm.max(0.0)))
         }
     }
     fn lap_state(&self) -> LapState {

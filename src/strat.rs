@@ -7,7 +7,13 @@ use regex::Regex;
 use std::cmp;
 use std::fmt;
 use std::iter;
+use std::iter::Sum;
 use std::ops::Add;
+use std::ops::AddAssign;
+use std::ops::Div;
+use std::ops::Mul;
+use std::ops::Sub;
+use std::ops::SubAssign;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -21,11 +27,20 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// This is a stupid wrapper around Duration so that we get the formatting of values we want
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct TimeSpan {
     d: Duration,
 }
 impl TimeSpan {
+    pub const ZERO: TimeSpan = TimeSpan { d: Duration::ZERO };
+    pub const ONE_MIN: TimeSpan = TimeSpan {
+        d: Duration::new(60, 0),
+    };
+    pub const ONE_HR: TimeSpan = TimeSpan {
+        d: Duration::new(60 * 60, 0),
+    };
+
     pub fn of(d: Duration) -> TimeSpan {
         TimeSpan { d }
     }
@@ -33,6 +48,73 @@ impl TimeSpan {
         TimeSpan {
             d: Duration::new(secs, nanos),
         }
+    }
+    pub fn from_secs_f64(d: f64) -> TimeSpan {
+        TimeSpan {
+            d: Duration::from_secs_f64(d),
+        }
+    }
+    pub fn from_secs_f32(d: f32) -> TimeSpan {
+        TimeSpan {
+            d: Duration::from_secs_f32(d),
+        }
+    }
+    pub fn as_secs(&self) -> u64 {
+        self.d.as_secs()
+    }
+    pub fn as_secs_f64(&self) -> f64 {
+        self.d.as_secs_f64()
+    }
+    pub fn as_secs_f32(&self) -> f32 {
+        self.d.as_secs_f32()
+    }
+    pub fn min(&self, rhs: Self) -> Self {
+        TimeSpan {
+            d: self.d.min(rhs.d),
+        }
+    }
+}
+impl Add for TimeSpan {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        TimeSpan { d: self.d + rhs.d }
+    }
+}
+impl AddAssign for TimeSpan {
+    fn add_assign(&mut self, rhs: Self) {
+        self.d += rhs.d;
+    }
+}
+impl Sum for TimeSpan {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut t = Self::ZERO;
+        for rhs in iter {
+            t.d += rhs.d;
+        }
+        t
+    }
+}
+impl Sub for TimeSpan {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        TimeSpan { d: self.d - rhs.d }
+    }
+}
+impl SubAssign for TimeSpan {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.d = self.d - rhs.d
+    }
+}
+impl Div<u32> for TimeSpan {
+    type Output = Self;
+    fn div(self, rhs: u32) -> Self {
+        TimeSpan { d: self.d / rhs }
+    }
+}
+impl Mul<u32> for TimeSpan {
+    type Output = Self;
+    fn mul(self, rhs: u32) -> Self {
+        TimeSpan { d: self.d * rhs }
     }
 }
 impl From<TimeSpan> for Duration {
@@ -45,6 +127,7 @@ impl From<&TimeSpan> for Duration {
         a.d
     }
 }
+
 use lazy_static::lazy_static;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,11 +160,9 @@ impl Data for TimeSpan {
     }
 }
 
-const ONE_HR: Duration = Duration::new(60 * 60, 0);
-
 impl fmt::Display for TimeSpan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.d >= ONE_HR {
+        if self >= &Self::ONE_HR {
             write!(
                 f,
                 "{:}:{:02}:{:02}",
@@ -104,21 +185,20 @@ impl fmt::Display for TimeSpan {
 pub struct Lap {
     pub fuel_used: f32,
     pub fuel_left: f32,
-    pub time: Duration,
+    pub time: TimeSpan,
     pub condition: LapState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Data, Lens)]
 pub struct Rate {
     pub fuel: f32,
-    #[data(same_fn = "PartialEq::eq")]
-    pub time: Duration,
+    pub time: TimeSpan,
 }
 impl Default for Rate {
     fn default() -> Self {
         Rate {
             fuel: 0.0,
-            time: Duration::new(0, 0),
+            time: TimeSpan::new(0, 0),
         }
     }
 }
@@ -158,14 +238,14 @@ impl fmt::Display for Pitstop {
 pub struct Stint {
     pub laps: i32,
     pub fuel: f32,
-    pub time: Duration,
+    pub time: TimeSpan,
 }
 impl Stint {
     fn new() -> Stint {
         Stint {
             laps: 0,
             fuel: 0.0,
-            time: Duration::ZERO,
+            time: TimeSpan::ZERO,
         }
     }
     fn add(&mut self, lap: &Rate) {
@@ -174,7 +254,7 @@ impl Stint {
         self.time += lap.time;
     }
     fn formatted_time(&self) -> String {
-        if self.time < Duration::new(60, 0) {
+        if self.time < TimeSpan::ONE_MIN {
             format!("{}s", self.time.as_secs())
         } else {
             let s = self.time.as_secs();
@@ -223,7 +303,7 @@ impl Strategy {
     pub fn total_fuel(&self) -> f32 {
         self.stints.iter().map(|s| s.fuel).sum()
     }
-    pub fn total_time(&self) -> Duration {
+    pub fn total_time(&self) -> TimeSpan {
         self.stints.iter().map(|s| s.time).sum()
     }
     pub fn fuel_target(&self) -> f32 {
@@ -240,8 +320,8 @@ impl Strategy {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EndsWith {
     Laps(i32),                 // race ends after this many more laps
-    Time(Duration),            // race ends after this much more time
-    LapsOrTime(i32, Duration), // first of the above 2 to happen
+    Time(TimeSpan),            // race ends after this much more time
+    LapsOrTime(i32, TimeSpan), // first of the above 2 to happen
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -278,7 +358,7 @@ impl StratRequest {
 
     fn stints(&self) -> Vec<Stint> {
         let yellow = iter::repeat(self.yellow).take(self.yellow_togo as usize);
-        let mut tm = Duration::ZERO;
+        let mut tm = TimeSpan::ZERO;
         let mut laps = 0;
         let laps = yellow.chain(iter::repeat(self.green)).take_while(|lap| {
             // for laps the race ends when Laps(l) are done
@@ -348,12 +428,12 @@ mod tests {
     fn rate_add() {
         let s = Rate {
             fuel: 0.5,
-            time: Duration::new(3, 0),
+            time: TimeSpan::new(3, 0),
         };
         let l = Lap {
             fuel_used: 0.3,
             fuel_left: 4.1,
-            time: Duration::new(5, 0),
+            time: TimeSpan::new(5, 0),
             condition: LapState::empty(),
         };
         let r = s.add(&l);
@@ -361,14 +441,14 @@ mod tests {
             r,
             Rate {
                 fuel: 0.8,
-                time: Duration::new(8, 0)
+                time: TimeSpan::new(8, 0)
             }
         );
     }
 
     #[test]
     fn strat_no_stops() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 20.0,
@@ -386,14 +466,14 @@ mod tests {
 
     #[test]
     fn strat_timed_race() {
-        let d = Duration::new(25, 0);
+        let d = TimeSpan::new(25, 0);
         let r = StratRequest {
             fuel_left: 20.0,
             tank_size: 20.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
             yellow_togo: 0,
-            ends: EndsWith::Time(Duration::new(105, 0)),
+            ends: EndsWith::Time(TimeSpan::new(105, 0)),
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate { fuel: 0.1, time: d },
         };
@@ -403,7 +483,7 @@ mod tests {
 
     #[test]
     fn strat_race_over() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 0.9,
             tank_size: 20.0,
@@ -420,7 +500,7 @@ mod tests {
 
     #[test]
     fn strat_one_stop_laps() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 10.0,
@@ -438,18 +518,18 @@ mod tests {
 
     #[test]
     fn strat_one_stop_time() {
-        let d = Duration::new(30, 0);
+        let d = TimeSpan::new(30, 0);
         let r = StratRequest {
             fuel_left: 5.0,
             tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
             yellow_togo: 2,
-            ends: EndsWith::Time(Duration::new(300, 0)),
+            ends: EndsWith::Time(TimeSpan::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
-                time: Duration::new(55, 0),
+                time: TimeSpan::new(55, 0),
             },
         };
         // after lap 1 t=55     f=4.9
@@ -468,18 +548,18 @@ mod tests {
 
     #[test]
     fn strat_one_stop_laps_or_time_ends_on_time() {
-        let d = Duration::new(30, 0);
+        let d = TimeSpan::new(30, 0);
         let r = StratRequest {
             fuel_left: 5.0,
             tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
             yellow_togo: 2,
-            ends: EndsWith::LapsOrTime(100, Duration::new(300, 0)),
+            ends: EndsWith::LapsOrTime(100, TimeSpan::new(300, 0)),
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
-                time: Duration::new(55, 0),
+                time: TimeSpan::new(55, 0),
             },
         };
         // after lap 1 t=55     f=4.9
@@ -498,18 +578,18 @@ mod tests {
 
     #[test]
     fn strat_one_stop_laps_or_time_ends_on_laps() {
-        let d = Duration::new(30, 0);
+        let d = TimeSpan::new(30, 0);
         let r = StratRequest {
             fuel_left: 5.0,
             tank_size: 10.0,
             max_fuel_save: 0.0,
             min_fuel: 0.0,
             yellow_togo: 2,
-            ends: EndsWith::LapsOrTime(10, Duration::new(3000, 0)),
+            ends: EndsWith::LapsOrTime(10, TimeSpan::new(3000, 0)),
             green: Rate { fuel: 1.0, time: d },
             yellow: Rate {
                 fuel: 0.1,
-                time: Duration::new(60, 0),
+                time: TimeSpan::new(60, 0),
             },
         };
         let s = r.compute().unwrap();
@@ -519,7 +599,7 @@ mod tests {
 
     #[test]
     fn strat_one_stop_yellow() {
-        let d = Duration::new(25, 0);
+        let d = TimeSpan::new(25, 0);
         let r = StratRequest {
             fuel_left: 9.5,
             tank_size: 10.0,
@@ -530,7 +610,7 @@ mod tests {
             green: Rate { fuel: 0.5, time: d },
             yellow: Rate {
                 fuel: 0.1,
-                time: d.mul_f32(5.0),
+                time: d * 5,
             },
         };
         let s = r.compute().unwrap();
@@ -540,7 +620,7 @@ mod tests {
 
     #[test]
     fn strat_two_stops() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.3,
             tank_size: 10.0,
@@ -558,7 +638,7 @@ mod tests {
 
     #[test]
     fn strat_one_stop_big_window() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.3,
             tank_size: 10.0,
@@ -576,7 +656,7 @@ mod tests {
 
     #[test]
     fn strat_two_stops_with_splash() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 1.5,
             tank_size: 10.0,
@@ -594,7 +674,7 @@ mod tests {
 
     #[test]
     fn strat_two_stops_only_just() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.6,
             tank_size: 10.0,
@@ -612,7 +692,7 @@ mod tests {
 
     #[test]
     fn strat_two_stops_fuel_save() {
-        let d = Duration::new(40, 0);
+        let d = TimeSpan::new(40, 0);
         let r = StratRequest {
             fuel_left: 9.0,
             tank_size: 20.0,
