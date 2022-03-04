@@ -1,18 +1,23 @@
+use druid::debug_state::DebugState;
 use druid::piet::{Text, TextLayout, TextLayoutBuilder};
 use druid::widget::{
-    Align, Flex, Label, LabelText, LineBreaking, Painter, Parse, SizedBox, TextBox, ViewSwitcher,
+    Align, Flex, Label, LabelText, LineBreaking, Painter, SizedBox, TextBox, ViewSwitcher,
 };
 use druid::{
-    AppLauncher, BoxConstraints, Color, Data, Env, Event, FontDescriptor, FontFamily, FontWeight,
-    Insets, Key, KeyOrValue, Lens, PaintCtx, Point, Rect, RenderContext, Size, UnitPoint, Widget,
-    WidgetExt, WidgetPod, WindowDesc,
+    AppLauncher, BoxConstraints, Color, Data, Env, Event, EventCtx, FontDescriptor, FontFamily,
+    FontWeight, Insets, Key, KeyOrValue, LayoutCtx, Lens, LifeCycle, LifeCycleCtx, PaintCtx, Point,
+    Rect, RenderContext, Size, UnitPoint, UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
+    WindowDesc,
 };
 use druid::{LensExt, TimerToken};
 use druid_widget_nursery::DropdownSelect;
 use history::RaceSession;
 use ircalc::{AmountLeft, Estimation};
+use std::fmt::Display;
 use std::marker::PhantomData;
+use std::mem;
 use std::ops::Add;
+use std::str::FromStr;
 use std::time::Duration;
 use strat::{EndsWith, Rate, StratRequest, TimeSpan};
 
@@ -807,5 +812,104 @@ impl<T: Data, W: Widget<T>, F: FnMut(&mut T)> Widget<T> for TimerWidget<T, W, F>
 
     fn paint(&mut self, ctx: &mut druid::PaintCtx, data: &T, env: &Env) {
         self.widget.paint(ctx, data, env);
+    }
+}
+
+/// Converts a `Widget<String>` to a `Widget<Option<T>>`, mapping parse errors to None
+/// This a modified version of the druid supplied Parse widget, which has issues when
+/// the parse/to_string() can loose characters e.g. for f32 "1.0" -> "1"
+struct Parse<T> {
+    widget: T,
+    state: String,
+}
+
+impl<T> Parse<T> {
+    /// Create a new `Parse` widget.
+    pub fn new(widget: T) -> Self {
+        Self {
+            widget,
+            state: String::new(),
+        }
+    }
+}
+
+impl<T: FromStr + Display + Data, W: Widget<String>> Widget<Option<T>> for Parse<W> {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut Option<T>, env: &Env) {
+        self.widget.event(ctx, event, &mut self.state, env);
+        *data = self.state.parse().ok();
+    }
+
+    fn lifecycle(
+        &mut self,
+        ctx: &mut LifeCycleCtx,
+        event: &LifeCycle,
+        data: &Option<T>,
+        env: &Env,
+    ) {
+        if let LifeCycle::WidgetAdded = event {
+            if let Some(data) = data {
+                self.state = data.to_string();
+            }
+        }
+        self.widget.lifecycle(ctx, event, &self.state, env)
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx, _old_data: &Option<T>, data: &Option<T>, env: &Env) {
+        if match (_old_data, data) {
+            (None, None) => true,
+            (Some(_), None) => false,
+            (None, Some(_)) => false,
+            (Some(x), Some(y)) => Data::same(x, y),
+        } {
+            return;
+        }
+        let old = match *data {
+            None => return, // Don't clobber the input
+            Some(ref x) => {
+                // Its possible that the current self.state represents the data value
+                // in that case we shouldn't clobber the self.state. This helps deal
+                // with types where parse()/to_string() round trips can loose information
+                // e.g. with floating point numbers, text of "1.0" becomes "1" in the
+                // round trip, and this makes it impossible to type in the .
+                let pv: Result<T, _> = self.state.parse();
+                match pv {
+                    Err(_) => mem::replace(&mut self.state, x.to_string()),
+                    Ok(v) => {
+                        if !Data::same(&v, x) {
+                            mem::replace(&mut self.state, x.to_string())
+                        } else {
+                            self.state.clone()
+                        }
+                    }
+                }
+            }
+        };
+        self.widget.update(ctx, &old, &self.state, env)
+    }
+
+    fn layout(
+        &mut self,
+        ctx: &mut LayoutCtx,
+        bc: &BoxConstraints,
+        _data: &Option<T>,
+        env: &Env,
+    ) -> Size {
+        self.widget.layout(ctx, bc, &self.state, env)
+    }
+
+    fn paint(&mut self, ctx: &mut PaintCtx, _data: &Option<T>, env: &Env) {
+        self.widget.paint(ctx, &self.state, env)
+    }
+
+    fn id(&self) -> Option<WidgetId> {
+        self.widget.id()
+    }
+
+    fn debug_state(&self, _data: &Option<T>) -> DebugState {
+        DebugState {
+            display_name: "Parse".to_string(),
+            main_value: self.state.clone(),
+            ..Default::default()
+        }
     }
 }
