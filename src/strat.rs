@@ -8,12 +8,7 @@ use std::cmp;
 use std::fmt;
 use std::iter;
 use std::iter::Sum;
-use std::ops::Add;
-use std::ops::AddAssign;
-use std::ops::Div;
-use std::ops::Mul;
-use std::ops::Sub;
-use std::ops::SubAssign;
+use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -113,7 +108,7 @@ impl Div<u32> for TimeSpan {
 }
 impl Mul<u32> for TimeSpan {
     type Output = Self;
-    fn mul(self, rhs: u32) -> Self {
+    fn mul(self, rhs: u32) -> TimeSpan {
         TimeSpan { d: self.d * rhs }
     }
 }
@@ -198,16 +193,23 @@ impl Default for Rate {
     fn default() -> Self {
         Rate {
             fuel: 0.0,
-            time: TimeSpan::new(0, 0),
+            time: TimeSpan::ZERO,
         }
     }
 }
-impl Rate {
-    pub fn add(&self, l: &Lap) -> Rate {
+impl Add<&Lap> for Rate {
+    type Output = Self;
+    fn add(self, rhs: &Lap) -> Self {
         Rate {
-            fuel: self.fuel + l.fuel_used,
-            time: self.time + l.time,
+            fuel: self.fuel + rhs.fuel_used,
+            time: self.time + rhs.time,
         }
+    }
+}
+impl AddAssign<&Lap> for Rate {
+    fn add_assign(&mut self, rhs: &Lap) {
+        self.fuel += rhs.fuel_used;
+        self.time += rhs.time;
     }
 }
 
@@ -253,23 +255,13 @@ impl Stint {
         self.fuel += lap.fuel;
         self.time += lap.time;
     }
-    fn formatted_time(&self) -> String {
-        if self.time < TimeSpan::ONE_MIN {
-            format!("{}s", self.time.as_secs())
-        } else {
-            let s = self.time.as_secs();
-            format!("{}:{:2}", s / 60, s % 60)
-        }
-    }
 }
 impl fmt::Display for Stint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "Stint {} laps, uses {} fuel, takes {}",
-            self.laps,
-            self.fuel,
-            self.formatted_time()
+            self.laps, self.fuel, self.time
         )
     }
 }
@@ -363,14 +355,14 @@ impl StratRequest {
         let laps = yellow.chain(iter::repeat(self.green)).take_while(|lap| {
             // for laps the race ends when Laps(l) are done
             // for timed races, the race ends on the lap after time runs out
-            let res = match self.ends {
+            let continu = match self.ends {
                 EndsWith::Laps(l) => laps < l,
                 EndsWith::Time(d) => tm <= d,
                 EndsWith::LapsOrTime(l, d) => laps < l && tm <= d,
             };
-            tm = tm.add(lap.time);
+            tm += lap.time;
             laps += 1;
-            res
+            continu
         });
         // the laps iterator will return the sequence of predicted laps until the conclusion of the race
 

@@ -85,7 +85,7 @@ impl History {
             .rev()
             .filter(|&l| l.condition.is_empty())
             .take(5)
-            .fold((0, Rate::default()), |acc, lap| (acc.0 + 1, acc.1.add(lap)));
+            .fold((0, Rate::default()), |acc, lap| (acc.0 + 1, acc.1 + lap));
         if self.def_green.is_some() && c < 2 {
             self.def_green
         } else if c >= 1 {
@@ -110,7 +110,7 @@ impl History {
                 if !yellow_start {
                     yellow_start = true;
                 } else {
-                    total = total.add(lap);
+                    total += lap;
                     count += 1;
                 }
             } else {
@@ -241,7 +241,7 @@ impl Db {
             }
         }
         tx.commit()?;
-        self.laps_written += laps.len();
+        self.laps_written = laps.len();
         Ok(())
     }
     /// returns the most recent session with enough green flag laps for each car/track/layout combo we know about

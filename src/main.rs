@@ -13,7 +13,6 @@ use history::RaceSession;
 use ircalc::{AmountLeft, Estimation};
 use std::marker::PhantomData;
 use std::ops::Add;
-
 use std::time::Duration;
 use strat::{EndsWith, Rate, StratRequest, TimeSpan};
 
@@ -41,8 +40,8 @@ fn main() {
             yellow: None,
             laps: None,
             time: Some(TimeSpan::new(50 * 60, 0)),
-            fuel_tank_size: Some(sessions[0].fuel_tank_size),
-            max_fuel_save: Some(sessions[0].max_fuel_save),
+            fuel_tank_size: None,
+            max_fuel_save: None,
             strat: None,
         },
         online: ircalc::Estimation::default(),
@@ -97,7 +96,6 @@ fn val<T: Data>(text: impl Into<LabelText<T>>, color: Option<KeyOrValue<Color>>)
 
 const COLOR_BG_KEY: Key<Color> = Key::new("color-bg-key");
 const COLOR_KEY: Key<Color> = Key::new("color-key");
-
 const COLOR_CLEAR: Color = Color::rgba8(0, 0, 0, 0);
 
 fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
@@ -438,13 +436,12 @@ impl OfflineState {
                     (Some(l), None) => EndsWith::Laps(l),
                     (None, Some(t)) => EndsWith::Time(*t),
                     (Some(l), Some(t)) => EndsWith::LapsOrTime(l, *t),
-                    (None, None) => todo!(),
+                    (None, None) => unreachable!(),
                 },
                 green: self.green.unwrap(),
                 yellow: Rate::default(),
             };
             self.strat = r.compute();
-            println!("new strat {:?}", self.strat);
         }
     }
 }
@@ -584,7 +581,11 @@ fn build_offline_widget() -> impl Widget<UiState> {
             Label::new(|d: &OfflineState, _: &Env| {
                 if let Some(s) = &d.strat {
                     if s.fuel_to_save > 0.0 {
-                        return format!("Save {:.2}L total to save a pit stop", s.fuel_to_save);
+                        return format!(
+                            "Save {:.2}L total to save a pit stop. Fuel lap target {:.2}L",
+                            s.fuel_to_save,
+                            s.fuel_target()
+                        );
                     }
                 }
                 "".into()
