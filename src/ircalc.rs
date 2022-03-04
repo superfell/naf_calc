@@ -18,26 +18,26 @@ use iracing_telem::flags::{Flags, SessionState, TrackLocation};
 use iracing_telem::DataUpdateResult;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ADuration {
+pub struct TimeSpan {
     d: Duration,
 }
-impl ADuration {
-    pub fn of(d: Duration) -> ADuration {
-        ADuration { d }
+impl TimeSpan {
+    pub fn of(d: Duration) -> TimeSpan {
+        TimeSpan { d }
     }
-    pub fn new(secs: u64, nanos: u32) -> ADuration {
-        ADuration {
+    pub fn new(secs: u64, nanos: u32) -> TimeSpan {
+        TimeSpan {
             d: Duration::new(secs, nanos),
         }
     }
 }
-impl From<ADuration> for Duration {
-    fn from(a: ADuration) -> Self {
+impl From<TimeSpan> for Duration {
+    fn from(a: TimeSpan) -> Self {
         a.d
     }
 }
-impl From<&ADuration> for Duration {
-    fn from(a: &ADuration) -> Self {
+impl From<&TimeSpan> for Duration {
+    fn from(a: &TimeSpan) -> Self {
         a.d
     }
 }
@@ -49,7 +49,7 @@ pub enum ParseError {
     Bogus,
 }
 
-impl FromStr for ADuration {
+impl FromStr for TimeSpan {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         lazy_static! {
@@ -62,12 +62,12 @@ impl FromStr for ADuration {
                 let secs = cap.get(3).map_or(0, |m| u64::from_str(m.as_str()).unwrap());
                 let mins = cap.get(2).map_or(0, |m| u64::from_str(m.as_str()).unwrap()) * 60;
                 let hours = cap.get(1).map_or(0, |m| u64::from_str(m.as_str()).unwrap()) * 60 * 60;
-                Ok(ADuration::new(secs + mins + hours, 0))
+                Ok(TimeSpan::new(secs + mins + hours, 0))
             }
         }
     }
 }
-impl Data for ADuration {
+impl Data for TimeSpan {
     fn same(&self, other: &Self) -> bool {
         self.d == other.d
     }
@@ -75,7 +75,7 @@ impl Data for ADuration {
 
 const ONE_HR: Duration = Duration::new(60 * 60, 0);
 
-impl fmt::Display for ADuration {
+impl fmt::Display for TimeSpan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.d >= ONE_HR {
             write!(
@@ -703,7 +703,7 @@ impl IrSessionInfo {
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use crate::ircalc::ADuration;
+    use crate::ircalc::TimeSpan;
 
     use super::SessionProgress;
     #[test]
@@ -720,28 +720,28 @@ mod tests {
 
     #[test]
     fn test_dur_parse() {
-        assert_eq!(ADuration::from_str("00:10").unwrap().d.as_secs(), 10);
-        assert_eq!(ADuration::from_str("05:10").unwrap().d.as_secs(), 310);
-        assert_eq!(ADuration::from_str("01:05:10").unwrap().d.as_secs(), 3910);
-        assert_eq!(ADuration::from_str(" 05:10 ").unwrap().d.as_secs(), 310);
+        assert_eq!(TimeSpan::from_str("00:10").unwrap().d.as_secs(), 10);
+        assert_eq!(TimeSpan::from_str("05:10").unwrap().d.as_secs(), 310);
+        assert_eq!(TimeSpan::from_str("01:05:10").unwrap().d.as_secs(), 3910);
+        assert_eq!(TimeSpan::from_str(" 05:10 ").unwrap().d.as_secs(), 310);
         assert_eq!(
-            ADuration::from_str("    01:05:10 ").unwrap().d.as_secs(),
+            TimeSpan::from_str("    01:05:10 ").unwrap().d.as_secs(),
             3910
         );
-        assert!(ADuration::from_str("").is_err());
-        assert!(ADuration::from_str("bob").is_err());
+        assert!(TimeSpan::from_str("").is_err());
+        assert!(TimeSpan::from_str("bob").is_err());
     }
 
     #[test]
     fn test_dur_display() {
-        assert_eq!(format!("{}", ADuration::of(Duration::ZERO)), "00:00");
-        assert_eq!(format!("{}", ADuration::new(5, 0)), "00:05");
-        assert_eq!(format!("{}", ADuration::new(35, 0)), "00:35");
-        assert_eq!(format!("{}", ADuration::new(59, 0)), "00:59");
-        assert_eq!(format!("{}", ADuration::new(60, 0)), "01:00");
-        assert_eq!(format!("{}", ADuration::new(65, 0)), "01:05");
-        assert_eq!(format!("{}", ADuration::new(60 * 59, 0)), "59:00");
-        assert_eq!(format!("{}", ADuration::new(3600, 0)), "1:00:00");
-        assert_eq!(format!("{}", ADuration::new(3600 * 5 + 5, 0)), "5:00:05");
+        assert_eq!(format!("{}", TimeSpan::of(Duration::ZERO)), "00:00");
+        assert_eq!(format!("{}", TimeSpan::new(5, 0)), "00:05");
+        assert_eq!(format!("{}", TimeSpan::new(35, 0)), "00:35");
+        assert_eq!(format!("{}", TimeSpan::new(59, 0)), "00:59");
+        assert_eq!(format!("{}", TimeSpan::new(60, 0)), "01:00");
+        assert_eq!(format!("{}", TimeSpan::new(65, 0)), "01:05");
+        assert_eq!(format!("{}", TimeSpan::new(60 * 59, 0)), "59:00");
+        assert_eq!(format!("{}", TimeSpan::new(3600, 0)), "1:00:00");
+        assert_eq!(format!("{}", TimeSpan::new(3600 * 5 + 5, 0)), "5:00:05");
     }
 }

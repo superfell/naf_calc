@@ -40,7 +40,7 @@ fn main() {
             green: None,
             yellow: None,
             laps: None,
-            time: Some(ircalc::ADuration::new(50 * 60, 0)),
+            time: Some(ircalc::TimeSpan::new(50 * 60, 0)),
             fuel_tank_size: Some(sessions[0].fuel_tank_size),
             max_fuel_save: Some(sessions[0].max_fuel_save),
             strat: None,
@@ -184,7 +184,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
             }
         }
     };
-    let fmt_tm = |f: &AmountLeft, _e: &Env| format!("{}", ircalc::ADuration::of(f.time));
+    let fmt_tm = |f: &AmountLeft, _e: &Env| format!("{}", ircalc::TimeSpan::of(f.time));
     w.set(
         1,
         1,
@@ -406,7 +406,7 @@ struct OfflineState {
     green: Option<Rate>,
     yellow: Option<Rate>,
     laps: Option<i32>,
-    time: Option<ircalc::ADuration>,
+    time: Option<ircalc::TimeSpan>,
     fuel_tank_size: Option<f32>,
     max_fuel_save: Option<f32>,
     #[data(same_fn = "PartialEq::eq")]
@@ -572,7 +572,7 @@ fn build_offline_widget() -> impl Widget<UiState> {
                         s.stops.len(),
                         if s.stops.len() == 1 { "" } else { "s" },
                         stint.laps,
-                        ircalc::ADuration::of(stint.time)
+                        ircalc::TimeSpan::of(stint.time)
                     ),
                 },
             })
