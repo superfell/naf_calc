@@ -184,9 +184,9 @@ fn build_active_dash() -> impl Widget<Estimation> {
         None => "".to_string(),
         Some(ps) => {
             if ps.is_open() {
-                format!("{} Laps", ps.close)
+                format!("{}", ps.close)
             } else {
-                format!("{}-{} Laps", ps.open, ps.close)
+                format!("{}-{}", ps.open, ps.close)
             }
         }
     };
