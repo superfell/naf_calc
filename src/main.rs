@@ -137,22 +137,12 @@ fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
 const GRID: Color = Color::GRAY;
 const GWIDTH: f64 = 1.0;
 
-#[derive(Debug, Clone, Copy, Data, Lens)]
+#[derive(Default, Debug, Clone, Copy, Data, Lens)]
 struct EditableSettings {
     max_fuel_save: Option<f32>,
     min_fuel: Option<f32>,
     extra_laps: Option<f32>,
     clear_tires: bool,
-}
-impl Default for EditableSettings {
-    fn default() -> Self {
-        EditableSettings {
-            max_fuel_save: None,
-            min_fuel: None,
-            extra_laps: None,
-            clear_tires: false,
-        }
-    }
 }
 impl EditableSettings {
     fn load(&mut self, s: &UserSettings) {
