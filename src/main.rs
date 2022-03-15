@@ -4,7 +4,8 @@
 use druid::debug_state::DebugState;
 use druid::piet::{Text, TextLayout, TextLayoutBuilder};
 use druid::widget::{
-    Align, Flex, Label, LabelText, LineBreaking, Painter, SizedBox, TextBox, ViewSwitcher,
+    Align, Button, Checkbox, Flex, Label, LabelText, LineBreaking, Painter, SizedBox, TextBox,
+    ViewSwitcher,
 };
 use druid::{
     AppLauncher, BoxConstraints, Color, Data, Env, Event, EventCtx, FontDescriptor, FontFamily,
@@ -15,7 +16,7 @@ use druid::{
 use druid::{LensExt, TimerToken};
 use druid_widget_nursery::DropdownSelect;
 use history::RaceSession;
-use ircalc::{AmountLeft, Estimation};
+use ircalc::{AmountLeft, Estimation, UserSettings};
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::mem;
@@ -53,6 +54,8 @@ fn main() {
             strat: None,
         },
         online: ircalc::Estimation::default(),
+        settings: EditableSettings::default(),
+        show_settings: false,
     };
     initial_state.offline.on_session_change();
     initial_state.offline.recalc();
@@ -66,13 +69,21 @@ fn main() {
 fn build_root_widget() -> impl Widget<UiState> {
     let mut calc = ircalc::Estimator::new();
     let vs = ViewSwitcher::new(
-        |v: &UiState, _env: &Env| v.online.connected,
-        |active: &bool, _v: &UiState, _env: &Env| {
-            if *active {
-                build_active_dash().lens(UiState::online).boxed()
+        |v: &UiState, _env: &Env| {
+            if !v.show_settings {
+                if v.online.connected {
+                    UiView::Online
+                } else {
+                    UiView::Offline
+                }
             } else {
-                build_offline_widget().boxed()
+                UiView::Settings
             }
+        },
+        |active: &UiView, _s: &UiState, _env: &Env| match *active {
+            UiView::Online => build_active_dash().lens(UiState::online).boxed(),
+            UiView::Offline => build_offline_widget().boxed(),
+            UiView::Settings => build_settings_widget().boxed(),
         },
     );
     TimerWidget {
@@ -123,9 +134,117 @@ fn colorer<T: PartialOrd + Copy + Add<Output = T>>(
     }
 }
 
+const GRID: Color = Color::GRAY;
+const GWIDTH: f64 = 1.0;
+
+#[derive(Debug, Clone, Copy, Data, Lens)]
+struct EditableSettings {
+    max_fuel_save: Option<f32>,
+    min_fuel: Option<f32>,
+    extra_laps: Option<f32>,
+    clear_tires: bool,
+}
+impl Default for EditableSettings {
+    fn default() -> Self {
+        let s = ircalc::UserSettings::load(ircalc::default_settings_file());
+        EditableSettings {
+            max_fuel_save: Some(s.max_fuel_save),
+            min_fuel: Some(s.min_fuel),
+            extra_laps: Some(s.extra_laps),
+            clear_tires: s.clear_tires,
+        }
+    }
+}
+impl EditableSettings {
+    fn update(&self, s: &mut UserSettings) {
+        if let Some(m) = self.max_fuel_save {
+            s.max_fuel_save = m;
+        }
+        if let Some(m) = self.min_fuel {
+            s.min_fuel = m;
+        }
+        if let Some(m) = self.extra_laps {
+            s.extra_laps = m;
+        }
+        s.clear_tires = self.clear_tires;
+    }
+}
+
+fn build_settings_widget() -> impl Widget<UiState> {
+    let mut w = GridWidget::new(2, 5);
+    for (r, s) in ["Max Fuel Save", "Min Fuel", "Extra Laps", "Clear Tires"]
+        .into_iter()
+        .enumerate()
+    {
+        w.set(
+            0,
+            r,
+            lbl(s, UnitPoint::RIGHT).padding(6.0).border(GRID, GWIDTH),
+        );
+    }
+    w.set(
+        1,
+        0,
+        Parse::new(TextBox::new().align_left())
+            .lens(EditableSettings::max_fuel_save)
+            .lens(UiState::settings)
+            .padding(6.0)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        1,
+        1,
+        Parse::new(TextBox::new().align_left())
+            .lens(EditableSettings::min_fuel)
+            .lens(UiState::settings)
+            .padding(6.0)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        1,
+        2,
+        Parse::new(TextBox::new().align_left())
+            .lens(EditableSettings::extra_laps)
+            .lens(UiState::settings)
+            .padding(6.0)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        1,
+        3,
+        Checkbox::new("")
+            .lens(EditableSettings::clear_tires)
+            .lens(UiState::settings)
+            .align_left()
+            .padding(6.0)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        0,
+        4,
+        Button::new("Cancel").align_right().padding(6.0).on_click(
+            |_ctx, data: &mut UiState, _env| {
+                data.show_settings = false;
+            },
+        ),
+    );
+    w.set(
+        1,
+        4,
+        Button::new("Save")
+            .align_left()
+            .padding(6.0)
+            .on_click(|_ctx, data: &mut UiState, _env| {
+                let mut s = UserSettings::load(ircalc::default_settings_file());
+                data.settings.update(&mut s);
+                let _ = s.save(ircalc::default_settings_file());
+                data.show_settings = false;
+            }),
+    );
+    w
+}
+
 fn build_active_dash() -> impl Widget<Estimation> {
-    const GRID: Color = Color::GRAY;
-    const GWIDTH: f64 = 1.0;
     let mut w = GridWidget::new(4, 7);
     w.set_col_width(0, 150.0);
     w.set_col_width(2, 175.0);
@@ -401,10 +520,19 @@ fn build_active_dash() -> impl Widget<Estimation> {
     w
 }
 
+#[derive(Data, Debug, Clone, Copy, PartialEq)]
+enum UiView {
+    Offline,
+    Online,
+    Settings,
+}
+
 #[derive(Data, Lens, Debug, Clone)]
 struct UiState {
     offline: OfflineState,
     online: Estimation,
+    settings: EditableSettings,
+    show_settings: bool,
 }
 #[derive(Data, Lens, Clone, Debug, PartialEq)]
 struct OfflineState {
@@ -459,8 +587,19 @@ fn build_offline_widget() -> impl Widget<UiState> {
         .map(|db| db.sessions())
         .unwrap()
         .unwrap();
-    let mut grid = GridWidget::new(2, 7);
+    let mut grid = GridWidget::new(3, 7);
     grid.set_col_width(0, 200.0);
+    grid.set_col_width(2, 50.0);
+    grid.set(
+        2,
+        0,
+        Button::new("S")
+            .on_click(|_ctx, data: &mut UiState, _env| {
+                data.show_settings = true;
+            })
+            .padding(2.0),
+    );
+    let os = || UiState::offline.then(OfflineStateLens {});
     for (i, l) in [
         "Car / Track",
         "Green",
@@ -487,7 +626,8 @@ fn build_offline_widget() -> impl Widget<UiState> {
         0,
         DropdownSelect::new(sessions.into_iter().map(|s| (s.car_track(), s)))
             .align_left()
-            .lens(OfflineState::session),
+            .lens(OfflineState::session)
+            .lens(os()),
     );
     let fmt_rate = |r: &Option<strat::Rate>, _e: &Env| match r {
         Some(r) => format!("{:.2}L / {:.2}s per lap", r.fuel, r.time.as_secs_f64()),
@@ -496,32 +636,44 @@ fn build_offline_widget() -> impl Widget<UiState> {
     grid.set(
         1,
         1,
-        lbl(fmt_rate, UnitPoint::LEFT).lens(OfflineState::green),
+        lbl(fmt_rate, UnitPoint::LEFT)
+            .lens(OfflineState::green)
+            .lens(os()),
     );
     grid.set(
         1,
         2,
-        lbl(fmt_rate, UnitPoint::LEFT).lens(OfflineState::yellow),
+        lbl(fmt_rate, UnitPoint::LEFT)
+            .lens(OfflineState::yellow)
+            .lens(os()),
     );
     grid.set(
         1,
         3,
-        Parse::new(TextBox::new().align_left()).lens(OfflineState::laps),
+        Parse::new(TextBox::new().align_left())
+            .lens(OfflineState::laps)
+            .lens(os()),
     );
     grid.set(
         1,
         4,
-        Parse::new(TextBox::new().align_left()).lens(OfflineState::time),
+        Parse::new(TextBox::new().align_left())
+            .lens(OfflineState::time)
+            .lens(os()),
     );
     grid.set(
         1,
         5,
-        Parse::new(TextBox::new().align_left()).lens(OfflineState::fuel_tank_size),
+        Parse::new(TextBox::new().align_left())
+            .lens(OfflineState::fuel_tank_size)
+            .lens(os()),
     );
     grid.set(
         1,
         6,
-        Parse::new(TextBox::new().align_left()).lens(OfflineState::max_fuel_save),
+        Parse::new(TextBox::new().align_left())
+            .lens(OfflineState::max_fuel_save)
+            .lens(os()),
     );
     let strat = Painter::new(|ctx: &mut PaintCtx, data: &OfflineState, _env: &Env| {
         fn draw_lap_num(ctx: &mut PaintCtx, lap: i32, pos: Point) {
@@ -581,10 +733,11 @@ fn build_offline_widget() -> impl Widget<UiState> {
                     ),
                 },
             })
-            .with_text_size(24.0),
+            .with_text_size(24.0)
+            .lens(os()),
             1.0,
         )
-        .with_flex_child(strat, 1.0)
+        .with_flex_child(strat.lens(os()), 1.0)
         .with_flex_child(
             Label::new(|d: &OfflineState, _: &Env| {
                 if let Some(s) = &d.strat {
@@ -598,13 +751,13 @@ fn build_offline_widget() -> impl Widget<UiState> {
                 }
                 "".into()
             })
-            .with_text_size(24.0),
+            .with_text_size(24.0)
+            .lens(os()),
             1.0,
         )
-        .lens(OfflineStateLens {})
-        .lens(UiState::offline)
 }
 
+#[derive(Debug, Clone, Copy)]
 struct OfflineStateLens {}
 
 impl Lens<OfflineState, OfflineState> for OfflineStateLens {

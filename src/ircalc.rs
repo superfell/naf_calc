@@ -79,17 +79,17 @@ impl From<ir::Error> for Error {
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-struct UserSettings {
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Data, Lens)]
+pub struct UserSettings {
     /// 0-1 the max percentage fuel saving to consider
-    max_fuel_save: f32,
+    pub max_fuel_save: f32,
     /// cars typically start to stutter around 0.2-0.3L of fuel left
     /// What's the minimum we should try to keep in it.
-    min_fuel: f32,
+    pub min_fuel: f32,
     /// when refueling add enough fuel for this many extra laps.
-    extra_laps: f32,
+    pub extra_laps: f32,
     /// always clear tires when setting pitstop options.
-    clear_tires: bool,
+    pub clear_tires: bool,
 }
 impl Default for UserSettings {
     fn default() -> UserSettings {
@@ -103,7 +103,7 @@ impl Default for UserSettings {
 }
 
 #[derive(Debug)]
-enum JsonLoadError {
+pub enum JsonLoadError {
     IOError(io::Error),
     JsonError(serde_json::Error),
 }
@@ -118,7 +118,7 @@ impl From<serde_json::Error> for JsonLoadError {
     }
 }
 impl UserSettings {
-    fn load(path: Option<PathBuf>) -> UserSettings {
+    pub fn load(path: Option<PathBuf>) -> UserSettings {
         match path {
             None => Self::default(),
             Some(p) => match Self::load_impl(p) {
@@ -136,7 +136,7 @@ impl UserSettings {
         let r: UserSettings = serde_json::from_reader(reader)?;
         Ok(r)
     }
-    fn save(&self, path: Option<PathBuf>) -> Result<(), JsonLoadError> {
+    pub fn save(&self, path: Option<PathBuf>) -> Result<(), JsonLoadError> {
         match path {
             None => Ok(()),
             Some(p) => {
@@ -151,6 +151,9 @@ impl UserSettings {
 pub fn default_laps_db() -> Option<PathBuf> {
     dirs_next::document_dir().map(|dir| dir.join("naf_calc\\laps.db"))
 }
+pub fn default_settings_file() -> Option<PathBuf> {
+    dirs_next::document_dir().map(|dir| dir.join("naf_calc\\settings.json"))
+}
 
 // state needed by a running calculator
 struct SessionProgress {
@@ -163,9 +166,7 @@ struct SessionProgress {
 }
 impl SessionProgress {
     fn new(session: ir::Session) -> Result<SessionProgress, ir::Error> {
-        let settings_filename =
-            dirs_next::document_dir().map(|dir| dir.join("naf_calc\\settings.json"));
-
+        let settings_filename = default_settings_file();
         let settings = UserSettings::load(settings_filename.clone());
         // temp
         let _ = UserSettings::default().save(settings_filename);
