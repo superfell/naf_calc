@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
+use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy, TimeSpan};
 use druid::{Data, Lens};
 use r2d2::ManageConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, Error};
-
-use super::strat::{EndsWith, Lap, LapState, Rate, StratRequest, Strategy, TimeSpan};
 use std::{
     cmp, error,
     path::{Path, PathBuf},
@@ -28,6 +27,20 @@ impl RaceSession {
             format!("{} @ {}", self.car, self.track_name)
         } else {
             format!("{} @ {} {}", self.car, self.track_name, self.layout_name)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Adjustments {
+    pub max_fuel_save: Option<f32>,
+    pub min_fuel: Option<f32>,
+}
+impl Adjustments {
+    fn none() -> Adjustments {
+        Adjustments {
+            max_fuel_save: None,
+            min_fuel: None,
         }
     }
 }
@@ -127,7 +140,7 @@ impl History {
         }
     }
 
-    pub fn strat(&self, fuel_left: f32, ends: EndsWith) -> Option<Strategy> {
+    pub fn strat(&self, fuel_left: f32, adj: &Adjustments, ends: EndsWith) -> Option<Strategy> {
         let green = self.recent_green()?;
         let yellow = self.recent_yellow().unwrap_or_else(|| Rate {
             fuel: green.fuel / 3.0,
@@ -142,8 +155,8 @@ impl History {
         let r = StratRequest {
             fuel_left,
             tank_size: self.cfg.fuel_tank_size,
-            max_fuel_save: self.cfg.max_fuel_save,
-            min_fuel: self.cfg.min_fuel,
+            max_fuel_save: adj.max_fuel_save.unwrap_or(self.cfg.max_fuel_save),
+            min_fuel: adj.min_fuel.unwrap_or(self.cfg.min_fuel),
             // a yellow flag is usually at least 3 laps.
             // TODO, can we detect the 2/1 togo state from iRacing?
             yellow_togo: if yellow_laps > 0 {
@@ -309,7 +322,7 @@ mod tests {
             car: "PM 18".to_string(),
         };
         let calc = History::new(cfg, None).unwrap();
-        let strat = calc.strat(10.0, EndsWith::Laps(50));
+        let strat = calc.strat(10.0, &Adjustments::none(), EndsWith::Laps(50));
         assert!(strat.is_none());
     }
 
@@ -332,7 +345,9 @@ mod tests {
             time: TimeSpan::new(30, 0),
             condition: LapState::empty(),
         });
-        let strat = calc.strat(9.5, EndsWith::Laps(49)).unwrap();
+        let strat = calc
+            .strat(9.5, &Adjustments::none(), EndsWith::Laps(49))
+            .unwrap();
         assert_eq!(vec![19, 20, 10], strat.laps());
         assert_eq!(vec![Pitstop::new(9, 19), Pitstop::new(29, 39)], strat.stops);
     }
@@ -357,7 +372,9 @@ mod tests {
             condition: LapState::empty(),
         };
         calc.add_lap(lap);
-        let strat = calc.strat(9.5, EndsWith::Laps(49)).unwrap();
+        let strat = calc
+            .strat(9.5, &Adjustments::none(), EndsWith::Laps(49))
+            .unwrap();
         assert_eq!(vec![19, 20, 10], strat.laps());
         assert_eq!(vec![Pitstop::new(9, 19), Pitstop::new(29, 39)], strat.stops);
         lap.fuel_left -= 0.5;
@@ -368,7 +385,9 @@ mod tests {
         calc.add_lap(lap);
         lap.fuel_left -= 0.5;
         calc.add_lap(lap);
-        let strat = calc.strat(7.5, EndsWith::Laps(45)).unwrap();
+        let strat = calc
+            .strat(7.5, &Adjustments::none(), EndsWith::Laps(45))
+            .unwrap();
         assert_eq!(vec![15, 20, 10], strat.laps());
         assert_eq!(vec![Pitstop::new(5, 15), Pitstop::new(25, 35)], strat.stops);
     }
@@ -393,7 +412,9 @@ mod tests {
             condition: LapState::empty(),
         };
         calc.add_lap(lap);
-        let strat = calc.strat(9.0, EndsWith::Laps(49)).unwrap();
+        let strat = calc
+            .strat(9.0, &Adjustments::none(), EndsWith::Laps(49))
+            .unwrap();
         assert_eq!(vec![9, 10, 10, 10, 10], strat.laps());
 
         lap.fuel_left -= 1.0;
@@ -402,7 +423,9 @@ mod tests {
         calc.add_lap(lap);
         lap.fuel_left -= 1.0;
         calc.add_lap(lap);
-        let strat = calc.strat(6.0, EndsWith::Laps(46)).unwrap();
+        let strat = calc
+            .strat(6.0, &Adjustments::none(), EndsWith::Laps(46))
+            .unwrap();
         assert_eq!(vec![6, 10, 10, 10, 10], strat.laps());
 
         lap.fuel_left -= 0.5;
@@ -412,7 +435,9 @@ mod tests {
         lap.condition = LapState::YELLOW;
         calc.add_lap(lap);
 
-        let strat = calc.strat(5.4, EndsWith::Laps(44)).unwrap();
+        let strat = calc
+            .strat(5.4, &Adjustments::none(), EndsWith::Laps(44))
+            .unwrap();
         assert_eq!(vec![5, 10, 10, 10, 9], strat.laps());
     }
 }

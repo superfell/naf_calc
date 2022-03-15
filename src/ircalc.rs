@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::history::{History, RaceSession};
+use super::history::{Adjustments, History, RaceSession};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy, TimeSpan};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
@@ -159,18 +159,12 @@ pub fn default_settings_file() -> Option<PathBuf> {
 struct SessionProgress {
     ir: ir::Session,
     calc: History,
-    settings: UserSettings,
     f: TelemetryFactory,
     last: IRacingTelemetryRow,
     lap_start: IRacingTelemetryRow,
 }
 impl SessionProgress {
-    fn new(session: ir::Session) -> Result<SessionProgress, ir::Error> {
-        let settings_filename = default_settings_file();
-        let settings = UserSettings::load(settings_filename.clone());
-        // temp
-        let _ = UserSettings::default().save(settings_filename);
-
+    fn new(session: ir::Session, settings: &UserSettings) -> Result<SessionProgress, ir::Error> {
         let session_info = IrSessionInfo::parse(unsafe { &session.session_info() }, 0);
         let cfg = RaceSession {
             fuel_tank_size: (session_info.driver_car_fuel_max_ltr
@@ -189,7 +183,6 @@ impl SessionProgress {
         Ok(SessionProgress {
             ir: session,
             calc,
-            settings,
             f,
             last,
             lap_start: last,
@@ -198,11 +191,15 @@ impl SessionProgress {
     fn read(&mut self) -> Result<IRacingTelemetryRow, ir::Error> {
         self.f.read(&self.ir)
     }
-    fn update(&mut self, result: &mut Estimation) -> Result<(), Error> {
+    fn update(&mut self, settings: &UserSettings, result: &mut Estimation) -> Result<(), Error> {
         unsafe {
             if self.ir.get_new_data() == DataUpdateResult::SessionExpired {
                 return Err(Error::SessionExpired);
             }
+        };
+        let adj = Adjustments {
+            max_fuel_save: Some(settings.max_fuel_save),
+            min_fuel: Some(settings.min_fuel),
         };
         let this = self.read()?;
         if this.session_time < self.last.session_time {
@@ -222,7 +219,7 @@ impl SessionProgress {
             // reset lap start when we leave the pit box
             self.lap_start = this;
             // show the stratagy if there's one available
-            if let Some(x) = self.calc.strat(this.fuel_level, this.ends()) {
+            if let Some(x) = self.calc.strat(this.fuel_level, &adj, this.ends()) {
                 strat_to_result(&x, result);
             }
         }
@@ -232,7 +229,7 @@ impl SessionProgress {
             // reset lap start when the parade lap starts.
             self.lap_start = this;
             // show the stratagy if there's one available
-            if let Some(x) = self.calc.strat(this.fuel_level, this.ends()) {
+            if let Some(x) = self.calc.strat(this.fuel_level, &adj, this.ends()) {
                 strat_to_result(&x, result);
             }
         }
@@ -257,7 +254,7 @@ impl SessionProgress {
                     // so skip those, they're junk.
                     self.calc.add_lap(new_lap);
                 }
-                if let Some(strat) = self.calc.strat(this.fuel_level, this.ends()) {
+                if let Some(strat) = self.calc.strat(this.fuel_level, &adj, this.ends()) {
                     strat_to_result(&strat, result)
                 }
             }
@@ -267,14 +264,14 @@ impl SessionProgress {
         if this.player_track_surface == TrackLocation::ApproachingPits
             && self.last.player_track_surface != TrackLocation::ApproachingPits
         {
-            if self.settings.clear_tires {
+            if settings.clear_tires {
                 unsafe {
                     let _ = self
                         .ir
                         .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::ClearTires));
                 }
             }
-            match self.calc.strat(this.fuel_level, this.ends()) {
+            match self.calc.strat(this.fuel_level, &adj, this.ends()) {
                 None => unsafe {
                     let _ = self
                         .ir
@@ -284,8 +281,8 @@ impl SessionProgress {
                 },
                 Some(x) => unsafe {
                     let total: f32 = x.total_fuel();
-                    let add = (total - this.fuel_level + (x.green.fuel * self.settings.extra_laps))
-                        .ceil();
+                    let add =
+                        (total - this.fuel_level + (x.green.fuel * settings.extra_laps)).ceil();
                     if add > 0.0 {
                         let _ = self
                             .ir
@@ -371,7 +368,7 @@ impl Estimator {
             state: None,
         }
     }
-    pub fn update(&mut self, result: &mut Estimation) {
+    pub fn update(&mut self, settings: &UserSettings, result: &mut Estimation) {
         unsafe {
             if self.state.is_none() {
                 match self.client.session() {
@@ -379,7 +376,7 @@ impl Estimator {
                         *result = Estimation::default();
                         return;
                     }
-                    Some(session) => match SessionProgress::new(session) {
+                    Some(session) => match SessionProgress::new(session, settings) {
                         Err(_) => {
                             *result = Estimation::default();
                             return;
@@ -393,7 +390,7 @@ impl Estimator {
             }
         }
         if let Some(cs) = &mut self.state {
-            match cs.update(result) {
+            match cs.update(settings, result) {
                 Ok(_) => {}
                 Err(Error::SessionExpired) => {
                     *result = Estimation::default();

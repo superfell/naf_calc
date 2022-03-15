@@ -4,8 +4,7 @@
 use druid::debug_state::DebugState;
 use druid::piet::{Text, TextLayout, TextLayoutBuilder};
 use druid::widget::{
-    Align, Button, Checkbox, Flex, Label, LabelText, LineBreaking, Painter, SizedBox, TextBox,
-    ViewSwitcher,
+    Align, Button, Checkbox, Flex, Label, LabelText, Painter, SizedBox, TextBox, ViewSwitcher,
 };
 use druid::{
     AppLauncher, BoxConstraints, Color, Data, Env, Event, EventCtx, FontDescriptor, FontFamily,
@@ -32,11 +31,6 @@ mod strat;
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() {
-    // describe the main window
-    let main_window = WindowDesc::new(build_root_widget())
-        .title("naf calc")
-        .window_size((900.0, 480.0));
-
     let sessions = history::Db::new(&ircalc::default_laps_db().unwrap())
         .unwrap()
         .sessions()
@@ -54,11 +48,17 @@ fn main() {
             strat: None,
         },
         online: ircalc::Estimation::default(),
-        settings: EditableSettings::default(),
+        settings_editor: EditableSettings::default(),
+        settings: UserSettings::load(ircalc::default_settings_file()),
         show_settings: false,
     };
     initial_state.offline.on_session_change();
     initial_state.offline.recalc();
+
+    // describe the main window
+    let main_window = WindowDesc::new(build_root_widget())
+        .title("naf calc")
+        .window_size((900.0, 480.0));
 
     // start the application
     AppLauncher::with_window(main_window)
@@ -81,13 +81,13 @@ fn build_root_widget() -> impl Widget<UiState> {
             }
         },
         |active: &UiView, _s: &UiState, _env: &Env| match *active {
-            UiView::Online => build_active_dash().lens(UiState::online).boxed(),
+            UiView::Online => build_active_dash().boxed(),
             UiView::Offline => build_offline_widget().boxed(),
             UiView::Settings => build_settings_widget().boxed(),
         },
     );
     TimerWidget {
-        on_fire: move |d: &mut UiState| calc.update(&mut d.online),
+        on_fire: move |d: &mut UiState| calc.update(&d.settings, &mut d.online),
         timer_id: TimerToken::INVALID,
         widget: vs,
         p: PhantomData,
@@ -146,16 +146,21 @@ struct EditableSettings {
 }
 impl Default for EditableSettings {
     fn default() -> Self {
-        let s = ircalc::UserSettings::load(ircalc::default_settings_file());
         EditableSettings {
-            max_fuel_save: Some(s.max_fuel_save),
-            min_fuel: Some(s.min_fuel),
-            extra_laps: Some(s.extra_laps),
-            clear_tires: s.clear_tires,
+            max_fuel_save: None,
+            min_fuel: None,
+            extra_laps: None,
+            clear_tires: false,
         }
     }
 }
 impl EditableSettings {
+    fn load(&mut self, s: &UserSettings) {
+        self.max_fuel_save = Some(s.max_fuel_save);
+        self.min_fuel = Some(s.min_fuel);
+        self.extra_laps = Some(s.extra_laps);
+        self.clear_tires = s.clear_tires;
+    }
     fn update(&self, s: &mut UserSettings) {
         if let Some(m) = self.max_fuel_save {
             s.max_fuel_save = m;
@@ -187,7 +192,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
         0,
         Parse::new(TextBox::new().align_left())
             .lens(EditableSettings::max_fuel_save)
-            .lens(UiState::settings)
+            .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
@@ -196,7 +201,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
         1,
         Parse::new(TextBox::new().align_left())
             .lens(EditableSettings::min_fuel)
-            .lens(UiState::settings)
+            .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
@@ -205,7 +210,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
         2,
         Parse::new(TextBox::new().align_left())
             .lens(EditableSettings::extra_laps)
-            .lens(UiState::settings)
+            .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
@@ -214,7 +219,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
         3,
         Checkbox::new("")
             .lens(EditableSettings::clear_tires)
-            .lens(UiState::settings)
+            .lens(UiState::settings_editor)
             .align_left()
             .padding(6.0)
             .border(GRID, GWIDTH),
@@ -235,16 +240,15 @@ fn build_settings_widget() -> impl Widget<UiState> {
             .align_left()
             .padding(6.0)
             .on_click(|_ctx, data: &mut UiState, _env| {
-                let mut s = UserSettings::load(ircalc::default_settings_file());
-                data.settings.update(&mut s);
-                let _ = s.save(ircalc::default_settings_file());
+                data.settings_editor.update(&mut data.settings);
+                let _ = data.settings.save(ircalc::default_settings_file());
                 data.show_settings = false;
             }),
     );
     w
 }
 
-fn build_active_dash() -> impl Widget<Estimation> {
+fn build_active_dash() -> impl Widget<UiState> {
     let mut w = GridWidget::new(4, 7);
     w.set_col_width(0, 150.0);
     w.set_col_width(2, 175.0);
@@ -253,21 +257,13 @@ fn build_active_dash() -> impl Widget<Estimation> {
     w.set(
         0,
         0,
-        Label::new(|d: &bool, _: &Env| {
-            if *d {
-                String::new()
-            } else {
-                "Waiting for iRacing".to_string()
-            }
-        })
-        .with_line_break_mode(LineBreaking::WordWrap)
-        .center()
-        .background(COLOR_BG_KEY)
-        .env_scope(|env, d: &bool| {
-            env.set(COLOR_BG_KEY, if *d { COLOR_CLEAR } else { Color::NAVY })
-        })
-        .lens(Estimation::connected)
-        .border(GRID, GWIDTH),
+        Button::new("S")
+            .padding(6.0)
+            .on_click(|_, data: &mut UiState, _| {
+                data.settings_editor.load(&data.settings);
+                data.show_settings = true;
+            })
+            .border(GRID, GWIDTH),
     );
     for (r, s) in ["Car", "Race", "", "Last Lap", "Average"]
         .into_iter()
@@ -322,7 +318,8 @@ fn build_active_dash() -> impl Widget<Estimation> {
                     COLOR_BG_KEY,
                     colorer(data.connected, data.car.fuel, data.race.fuel, 1.0),
                 )
-            }),
+            })
+            .lens(UiState::online),
     );
     w.set(
         2,
@@ -336,7 +333,8 @@ fn build_active_dash() -> impl Widget<Estimation> {
                     COLOR_BG_KEY,
                     colorer(data.connected, data.car.laps, data.race.laps, 0.0),
                 )
-            }),
+            })
+            .lens(UiState::online),
     );
     w.set(
         3,
@@ -355,14 +353,16 @@ fn build_active_dash() -> impl Widget<Estimation> {
                         TimeSpan::ZERO,
                     ),
                 )
-            }),
+            })
+            .lens(UiState::online),
     );
     w.set(
         1,
         2,
         val(fmt_f32, None)
             .lens(Estimation::race.then(AmountLeft::fuel))
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .lens(UiState::online),
     );
     w.set(
         2,
@@ -379,7 +379,8 @@ fn build_active_dash() -> impl Widget<Estimation> {
                         Color::WHITE
                     },
                 )
-            }),
+            })
+            .lens(UiState::online),
     );
     w.set(
         3,
@@ -396,14 +397,16 @@ fn build_active_dash() -> impl Widget<Estimation> {
                         Color::WHITE
                     },
                 )
-            }),
+            })
+            .lens(UiState::online),
     );
     w.set(
         1,
         4,
         val(fmt_f32, None)
             .lens(Estimation::fuel_last_lap)
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .lens(UiState::online),
     );
     let pad_right = Insets::new(0.0, 0.0, 6.0, 0.0);
     w.set(
@@ -418,14 +421,16 @@ fn build_active_dash() -> impl Widget<Estimation> {
         4,
         val(fmt_f32_blank_zero, None)
             .lens(Estimation::save)
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .lens(UiState::online),
     );
     w.set(
         1,
         5,
         val(fmt_f32_blank_zero, None)
             .lens(Estimation::green.then(Rate::fuel))
-            .border(GRID, GWIDTH),
+            .border(GRID, GWIDTH)
+            .lens(UiState::online),
     );
     w.set(
         2,
@@ -454,7 +459,8 @@ fn build_active_dash() -> impl Widget<Estimation> {
                         COLOR_CLEAR
                     },
                 )
-            }),
+            })
+            .lens(UiState::online),
     );
     w.set(
         0,
@@ -476,7 +482,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
             UnitPoint::LEFT,
         )
         .padding(Insets::new(0.6, 0.0, 0.0, 0.0))
-        .lens(Estimation::next_stop),
+        .lens(UiState::online.then(Estimation::next_stop)),
     );
     w.set(
         1,
@@ -501,7 +507,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
                     },
                 )
             })
-            .lens(Estimation::next_stop),
+            .lens(UiState::online.then(Estimation::next_stop)),
     );
     w.set(
         2,
@@ -514,7 +520,7 @@ fn build_active_dash() -> impl Widget<Estimation> {
         3,
         6,
         val(fmt_i32, None)
-            .lens(Estimation::stops)
+            .lens(UiState::online.then(Estimation::stops))
             .border(GRID, GWIDTH),
     );
     w
@@ -531,7 +537,8 @@ enum UiView {
 struct UiState {
     offline: OfflineState,
     online: Estimation,
-    settings: EditableSettings,
+    settings_editor: EditableSettings,
+    settings: UserSettings,
     show_settings: bool,
 }
 #[derive(Data, Lens, Clone, Debug, PartialEq)]
@@ -595,6 +602,7 @@ fn build_offline_widget() -> impl Widget<UiState> {
         0,
         Button::new("S")
             .on_click(|_ctx, data: &mut UiState, _env| {
+                data.settings_editor.load(&data.settings);
                 data.show_settings = true;
             })
             .padding(2.0),
