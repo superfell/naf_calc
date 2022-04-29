@@ -55,10 +55,19 @@ fn main() {
     initial_state.offline.on_session_change();
     initial_state.offline.recalc();
 
+    let monitors = druid::Screen::get_monitors();
+    let mut m = &monitors[0];
+    for cm in &monitors {
+        if cm.virtual_work_rect().height() < m.virtual_work_rect().height() {
+            m = cm;
+        }
+    }
+    let mr = m.virtual_work_rect();
     // describe the main window
     let main_window = WindowDesc::new(build_root_widget())
         .title("naf calc")
-        .window_size((900.0, 480.0));
+        .window_size((900.0, 480.0))
+        .set_position(Point::new(mr.min_x(), mr.min_y()));
 
     // start the application
     AppLauncher::with_window(main_window)
