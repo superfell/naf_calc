@@ -142,6 +142,7 @@ struct EditableSettings {
     max_fuel_save: Option<f32>,
     min_fuel: Option<f32>,
     extra_laps: Option<f32>,
+    extra_fuel: Option<f32>,
     clear_tires: bool,
 }
 impl EditableSettings {
@@ -149,6 +150,7 @@ impl EditableSettings {
         self.max_fuel_save = Some(s.max_fuel_save);
         self.min_fuel = Some(s.min_fuel);
         self.extra_laps = Some(s.extra_laps);
+        self.extra_fuel = Some(s.extra_fuel);
         self.clear_tires = s.clear_tires;
     }
     fn update(&self, s: &mut UserSettings) {
@@ -161,15 +163,24 @@ impl EditableSettings {
         if let Some(m) = self.extra_laps {
             s.extra_laps = m;
         }
+        if let Some(m) = self.extra_fuel {
+            s.extra_fuel = m;
+        }
         s.clear_tires = self.clear_tires;
     }
 }
 
 fn build_settings_widget() -> impl Widget<UiState> {
-    let mut w = GridWidget::new(2, 5);
-    for (r, s) in ["Max Fuel Save", "Min Fuel", "Extra Laps", "Clear Tires"]
-        .into_iter()
-        .enumerate()
+    let mut w = GridWidget::new(2, 6);
+    for (r, s) in [
+        "Max Fuel Save",
+        "Min Fuel",
+        "Extra Laps",
+        "Min Extra Fuel",
+        "Clear Tires",
+    ]
+    .into_iter()
+    .enumerate()
     {
         w.set(
             0,
@@ -207,6 +218,15 @@ fn build_settings_widget() -> impl Widget<UiState> {
     w.set(
         1,
         3,
+        Parse::new(TextBox::new().align_left())
+            .lens(EditableSettings::extra_fuel)
+            .lens(UiState::settings_editor)
+            .padding(6.0)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        1,
+        4,
         Checkbox::new("")
             .lens(EditableSettings::clear_tires)
             .lens(UiState::settings_editor)
@@ -216,7 +236,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
     );
     w.set(
         0,
-        4,
+        5,
         Button::new("Cancel").align_right().padding(6.0).on_click(
             |_ctx, data: &mut UiState, _env| {
                 data.show_settings = false;
@@ -225,7 +245,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
     );
     w.set(
         1,
-        4,
+        5,
         Button::new("Save")
             .align_left()
             .padding(6.0)

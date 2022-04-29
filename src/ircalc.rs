@@ -88,6 +88,9 @@ pub struct UserSettings {
     pub min_fuel: f32,
     /// when refueling add enough fuel for this many extra laps.
     pub extra_laps: f32,
+    /// when refueling add this amount of extra fuel. Will pick the larger
+    /// of this or extra_laps.
+    pub extra_fuel: f32,
     /// always clear tires when setting pitstop options.
     pub clear_tires: bool,
 }
@@ -97,6 +100,7 @@ impl Default for UserSettings {
             max_fuel_save: 0.15,
             min_fuel: 0.2,
             extra_laps: 2.0,
+            extra_fuel: 1.0,
             clear_tires: true,
         }
     }
@@ -281,8 +285,9 @@ impl SessionProgress {
                 },
                 Some(x) => unsafe {
                     let total: f32 = x.total_fuel();
-                    let add =
-                        (total - this.fuel_level + (x.green.fuel * settings.extra_laps)).ceil();
+                    let add = (total - this.fuel_level
+                        + (settings.extra_fuel.max(x.green.fuel * settings.extra_laps)))
+                    .ceil();
                     if add > 0.0 {
                         let _ = self
                             .ir
