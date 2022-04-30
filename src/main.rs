@@ -103,11 +103,13 @@ fn build_root_widget() -> impl Widget<UiState> {
     }
 }
 
+const LABEL_TEXT_SIZE: f64 = 32.0;
+
 fn lbl<T: Data>(l: impl Into<LabelText<T>>, align: UnitPoint) -> impl Widget<T> {
     SizedBox::new(Align::new(
         align,
         Label::new(l)
-            .with_text_size(32.0)
+            .with_text_size(LABEL_TEXT_SIZE)
             .with_text_color(Color::grey8(200)),
     ))
 }
@@ -197,10 +199,14 @@ fn build_settings_widget() -> impl Widget<UiState> {
             lbl(s, UnitPoint::RIGHT).padding(6.0).border(GRID, GWIDTH),
         );
     }
+    fn edit_box() -> impl Widget<Option<f32>> {
+        Parse::new(TextBox::new().with_text_size(LABEL_TEXT_SIZE).align_left())
+    }
+
     w.set(
         1,
         0,
-        Parse::new(TextBox::new().align_left())
+        edit_box()
             .lens(EditableSettings::max_fuel_save)
             .lens(UiState::settings_editor)
             .padding(6.0)
@@ -209,7 +215,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
     w.set(
         1,
         1,
-        Parse::new(TextBox::new().align_left())
+        edit_box()
             .lens(EditableSettings::min_fuel)
             .lens(UiState::settings_editor)
             .padding(6.0)
@@ -218,7 +224,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
     w.set(
         1,
         2,
-        Parse::new(TextBox::new().align_left())
+        edit_box()
             .lens(EditableSettings::extra_laps)
             .lens(UiState::settings_editor)
             .padding(6.0)
@@ -227,7 +233,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
     w.set(
         1,
         3,
-        Parse::new(TextBox::new().align_left())
+        edit_box()
             .lens(EditableSettings::extra_fuel)
             .lens(UiState::settings_editor)
             .padding(6.0)
@@ -246,16 +252,17 @@ fn build_settings_widget() -> impl Widget<UiState> {
     w.set(
         0,
         5,
-        Button::new("Cancel").align_right().padding(6.0).on_click(
-            |_ctx, data: &mut UiState, _env| {
+        Button::from_label(Label::new("Cancel").with_text_size(LABEL_TEXT_SIZE))
+            .align_right()
+            .padding(6.0)
+            .on_click(|_ctx, data: &mut UiState, _env| {
                 data.show_settings = false;
-            },
-        ),
+            }),
     );
     w.set(
         1,
         5,
-        Button::new("Save")
+        Button::from_label(Label::new("Save").with_text_size(LABEL_TEXT_SIZE))
             .align_left()
             .padding(6.0)
             .on_click(|_ctx, data: &mut UiState, _env| {
