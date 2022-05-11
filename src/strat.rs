@@ -302,7 +302,8 @@ impl Strategy {
         if self.fuel_to_save > 0.0 {
             let laps_til_last_stop: i32 = self.stints.iter().rev().skip(1).map(|s| s.laps).sum();
             if laps_til_last_stop > 0 {
-                return self.fuel_to_save / (laps_til_last_stop as f32);
+                let fuel_to_last_stop: f32 = self.stints.iter().rev().skip(1).map(|s| s.fuel).sum();
+                return (fuel_to_last_stop - self.fuel_to_save) / (laps_til_last_stop as f32);
             }
         }
         0.0
@@ -710,6 +711,10 @@ mod tests {
         );
         // if you can save 1 liter, you can skip the last pit stop
         assert_eq!(1.0, s.fuel_to_save);
+        // 49l to last stint, minus the 1.0 we need to save
+        // div by the 49 laps to get to the last stint gives us
+        // our per lap fuel target
+        assert_eq!((9.0 + 20.0 + 20.0 - 1.0) / 49.0, s.fuel_target());
     }
 
     #[test]
