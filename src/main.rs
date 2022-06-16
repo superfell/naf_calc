@@ -44,8 +44,7 @@ fn main() {
     // sapi_lite::initialize().unwrap();
     // let synth = sapi_lite::tts::EventfulSynthesizer::new(events).unwrap();
     // synth.speak("Pit in the next 5 laps").unwrap();
-    log_panics::init();
-    Logger::try_with_str("info")
+    let logger = Logger::try_with_str("info")
         .unwrap()
         .log_to_file(FileSpec::default()) // write logs to file
         .duplicate_to_stderr(Duplicate::Warn) // print warnings and errors also to the console
@@ -53,7 +52,13 @@ fn main() {
         .start()
         .unwrap();
     info!("naf_calc starting");
-
+    log_panics::init();
+    let logger_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        logger_hook(info);
+        logger.flush();
+        std::process::exit(-1);
+    }));
     let sessions = history::Db::new(&ircalc::default_laps_db().unwrap())
         .unwrap()
         .sessions()
