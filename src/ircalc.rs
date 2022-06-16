@@ -2,6 +2,7 @@
 
 use super::history::{Adjustments, History, RaceSession};
 use super::strat::{EndsWith, Lap, LapState, Pitstop, Rate, Strategy, TimeSpan};
+use chrono::{DateTime, Local};
 use druid::{Data, Lens};
 use ir::flags::{BroadcastMsg, PitCommand};
 use std::fs::File;
@@ -42,6 +43,10 @@ pub struct Estimation {
     pub next_stop: Option<Pitstop>, // details on the next pitstop
     pub save: f32,                  // save this much fuel to skip the last pitstop
     pub save_target: f32,           // target fuel usage per lap to meet save target
+    pub track_temp: f32,            // current track temp
+    pub start_track_temp: f32,      // track temp at the start of the session
+    #[data(same_fn = "PartialEq::eq")]
+    pub now: DateTime<Local>, // current local (the simulator PC) date/time
 }
 impl Default for Estimation {
     fn default() -> Self {
@@ -57,6 +62,9 @@ impl Default for Estimation {
             next_stop: None,
             save: 0.0,
             save_target: 0.0,
+            track_temp: 0.0,
+            start_track_temp: 0.0,
+            now: Local::now(),
         }
     }
 }
@@ -166,6 +174,7 @@ struct SessionProgress {
     f: TelemetryFactory,
     last: IRacingTelemetryRow,
     lap_start: IRacingTelemetryRow,
+    first: IRacingTelemetryRow,
 }
 impl SessionProgress {
     fn new(session: ir::Session, settings: &UserSettings) -> Result<SessionProgress, ir::Error> {
@@ -190,6 +199,7 @@ impl SessionProgress {
             f,
             last,
             lap_start: last,
+            first: last,
         })
     }
     fn read(&mut self) -> Result<IRacingTelemetryRow, ir::Error> {
@@ -339,6 +349,10 @@ impl SessionProgress {
                 result.race_tm_estimated = false;
             }
         }
+        // update track temp & time
+        result.track_temp = this.track_temp;
+        result.start_track_temp = self.first.track_temp;
+        result.now = Local::now();
         self.last = this;
         Ok(())
     }
@@ -440,6 +454,7 @@ struct IRacingTelemetryRow {
     race_laps: i32,
     fuel_level: f32,
     lap_progress: f32,
+    track_temp: f32,
 }
 impl IRacingTelemetryRow {
     fn ends(&self) -> EndsWith {
@@ -523,6 +538,7 @@ struct TelemetryFactory {
     race_laps: ir::Var,
     fuel_level: ir::Var,
     lap_progress: ir::Var,
+    track_temp: ir::Var,
 }
 impl TelemetryFactory {
     fn new(c: &ir::Session) -> TelemetryFactory {
@@ -543,6 +559,7 @@ impl TelemetryFactory {
                 race_laps: c.find_var("RaceLaps").unwrap(),
                 fuel_level: c.find_var("FuelLevel").unwrap(),
                 lap_progress: c.find_var("LapDistPct").unwrap(),
+                track_temp: c.find_var("TrackTempCrew").unwrap(),
             }
         }
     }
@@ -564,6 +581,7 @@ impl TelemetryFactory {
                 race_laps: c.value(&self.race_laps)?,
                 fuel_level: c.value(&self.fuel_level)?,
                 lap_progress: c.value(&self.lap_progress)?,
+                track_temp: c.value(&self.track_temp)?,
             })
         }
     }

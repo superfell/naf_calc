@@ -128,12 +128,12 @@ fn lbl<T: Data>(l: impl Into<LabelText<T>>, align: UnitPoint) -> impl Widget<T> 
 fn val<T: Data>(text: impl Into<LabelText<T>>, color: Option<KeyOrValue<Color>>) -> impl Widget<T> {
     let font = FontDescriptor::new(FontFamily::SYSTEM_UI)
         .with_weight(FontWeight::BOLD)
-        .with_size(56.0);
+        .with_size(48.0);
     let mut lbl = Label::<T>::new(text).with_font(font);
     if let Some(c) = color {
         lbl = lbl.with_text_color(c);
     }
-    Align::new(UnitPoint::CENTER, lbl)
+    Align::new(UnitPoint::TOP, lbl)
 }
 
 const COLOR_BG_KEY: Key<Color> = Key::new("color-bg-key");
@@ -287,7 +287,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
 }
 
 fn build_active_dash() -> impl Widget<UiState> {
-    let mut w = GridWidget::new(4, 7);
+    let mut w = GridWidget::new(4, 8);
     w.set_col_width(0, 150.0);
     w.set_col_width(2, 175.0);
     w.set_row_height(0, 45.0);
@@ -520,7 +520,8 @@ fn build_active_dash() -> impl Widget<UiState> {
             UnitPoint::LEFT,
         )
         .padding(Insets::new(0.6, 0.0, 0.0, 0.0))
-        .lens(UiState::online.then(Estimation::next_stop)),
+        .lens(UiState::online.then(Estimation::next_stop))
+        .border(GRID, GWIDTH),
     );
     w.set(
         1,
@@ -545,7 +546,8 @@ fn build_active_dash() -> impl Widget<UiState> {
                     },
                 )
             })
-            .lens(UiState::online.then(Estimation::next_stop)),
+            .lens(UiState::online.then(Estimation::next_stop))
+            .border(GRID, GWIDTH),
     );
     w.set(
         2,
@@ -560,6 +562,61 @@ fn build_active_dash() -> impl Widget<UiState> {
         val(fmt_i32, None)
             .lens(UiState::online.then(Estimation::stops))
             .border(GRID, GWIDTH),
+    );
+
+    w.set(
+        0,
+        7,
+        lbl("Trk Temp", UnitPoint::RIGHT)
+            .padding(pad_right)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        1,
+        7,
+        val(
+            |f: &Estimation, _e: &Env| {
+                format!(
+                    "{:0.1}  {:+0.1}",
+                    f.start_track_temp,
+                    f.track_temp - f.start_track_temp
+                )
+            },
+            None,
+        )
+        .background(COLOR_BG_KEY)
+        .env_scope(|env, data| {
+            let delta = data.track_temp - data.start_track_temp;
+            env.set(
+                COLOR_BG_KEY,
+                if delta < -1.0 {
+                    Color::GREEN
+                } else if delta > 1.0 {
+                    Color::RED
+                } else {
+                    COLOR_CLEAR
+                },
+            )
+        })
+        .lens(UiState::online)
+        .border(GRID, GWIDTH),
+    );
+    w.set(
+        2,
+        7,
+        lbl("Time", UnitPoint::RIGHT)
+            .padding(pad_right)
+            .border(GRID, GWIDTH),
+    );
+    w.set(
+        3,
+        7,
+        val(
+            |f: &Estimation, _e: &Env| f.now.format("%H:%M:%S").to_string(),
+            None,
+        )
+        .lens(UiState::online)
+        .border(GRID, GWIDTH),
     );
     w
 }
