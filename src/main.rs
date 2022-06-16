@@ -32,7 +32,18 @@ mod strat;
 
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
+// struct Events {}
+// impl sapi_lite::tts::EventHandler for Events {
+//     fn on_speech_finished(&self, id: u32) {
+//         println!("on_rec {}", id);
+//     }
+// }
+
 fn main() {
+    // let events = Events {};
+    // sapi_lite::initialize().unwrap();
+    // let synth = sapi_lite::tts::EventfulSynthesizer::new(events).unwrap();
+    // synth.speak("Pit in the next 5 laps").unwrap();
     log_panics::init();
     Logger::try_with_str("info")
         .unwrap()
@@ -167,6 +178,7 @@ struct EditableSettings {
     extra_laps: Option<f32>,
     extra_fuel: Option<f32>,
     clear_tires: bool,
+    take_tires: bool,
 }
 impl EditableSettings {
     fn load(&mut self, s: &UserSettings) {
@@ -175,6 +187,7 @@ impl EditableSettings {
         self.extra_laps = Some(s.extra_laps);
         self.extra_fuel = Some(s.extra_fuel);
         self.clear_tires = s.clear_tires;
+        self.take_tires = s.take_tires;
     }
     fn update(&self, s: &mut UserSettings) {
         if let Some(m) = self.max_fuel_save {
@@ -190,17 +203,19 @@ impl EditableSettings {
             s.extra_fuel = m;
         }
         s.clear_tires = self.clear_tires;
+        s.take_tires = self.take_tires;
     }
 }
 
 fn build_settings_widget() -> impl Widget<UiState> {
-    let mut w = GridWidget::new(2, 6);
+    let mut w = GridWidget::new(2, 7);
     for (r, s) in [
         "Max Fuel Save",
         "Min Fuel",
         "Extra Laps",
         "Min Extra Fuel",
         "Clear Tires",
+        "Take Tires",
     ]
     .into_iter()
     .enumerate()
@@ -214,56 +229,84 @@ fn build_settings_widget() -> impl Widget<UiState> {
     fn edit_box() -> impl Widget<Option<f32>> {
         Parse::new(TextBox::new().with_text_size(LABEL_TEXT_SIZE).align_left())
     }
-
+    let mut row = 0;
     w.set(
         1,
-        0,
+        row,
         edit_box()
             .lens(EditableSettings::max_fuel_save)
             .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
+    row += 1;
     w.set(
         1,
-        1,
+        row,
         edit_box()
             .lens(EditableSettings::min_fuel)
             .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
+    row += 1;
     w.set(
         1,
-        2,
+        row,
         edit_box()
             .lens(EditableSettings::extra_laps)
             .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
+    row += 1;
     w.set(
         1,
-        3,
+        row,
         edit_box()
             .lens(EditableSettings::extra_fuel)
             .lens(UiState::settings_editor)
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
+    row += 1;
     w.set(
         1,
-        4,
+        row,
         Checkbox::new("")
             .lens(EditableSettings::clear_tires)
+            .on_click(|_ctx, data, _env| {
+                data.clear_tires = !data.clear_tires;
+                if data.clear_tires {
+                    data.take_tires = false;
+                }
+            })
             .lens(UiState::settings_editor)
             .align_left()
             .padding(6.0)
             .border(GRID, GWIDTH),
     );
+    row += 1;
+    w.set(
+        1,
+        row,
+        Checkbox::new("")
+            .lens(EditableSettings::take_tires)
+            .on_click(|_ctx, data, _env| {
+                data.take_tires = !data.take_tires;
+                if data.take_tires {
+                    data.clear_tires = false;
+                }
+            })
+            .lens(UiState::settings_editor)
+            .align_left()
+            .padding(6.0)
+            .border(GRID, GWIDTH),
+    );
+    row += 1;
     w.set(
         0,
-        5,
+        row,
         Button::from_label(Label::new("Cancel").with_text_size(LABEL_TEXT_SIZE))
             .align_right()
             .padding(6.0)
@@ -273,7 +316,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
     );
     w.set(
         1,
-        5,
+        row,
         Button::from_label(Label::new("Save").with_text_size(LABEL_TEXT_SIZE))
             .align_left()
             .padding(6.0)
@@ -283,6 +326,7 @@ fn build_settings_widget() -> impl Widget<UiState> {
                 data.show_settings = false;
             }),
     );
+
     w
 }
 

@@ -101,6 +101,8 @@ pub struct UserSettings {
     pub extra_fuel: f32,
     /// always clear tires when setting pitstop options.
     pub clear_tires: bool,
+    /// always take tires when setting pitstop options.
+    pub take_tires: bool,
 }
 impl Default for UserSettings {
     fn default() -> UserSettings {
@@ -109,7 +111,8 @@ impl Default for UserSettings {
             min_fuel: 0.2,
             extra_laps: 2.0,
             extra_fuel: 1.0,
-            clear_tires: true,
+            clear_tires: false,
+            take_tires: false,
         }
     }
 }
@@ -283,6 +286,21 @@ impl SessionProgress {
                     let _ = self
                         .ir
                         .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::ClearTires));
+                }
+            } else if settings.take_tires {
+                unsafe {
+                    let _ = self
+                        .ir
+                        .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::LF(None)));
+                    let _ = self
+                        .ir
+                        .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::RF(None)));
+                    let _ = self
+                        .ir
+                        .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::LR(None)));
+                    let _ = self
+                        .ir
+                        .broadcast_msg(BroadcastMsg::PitCommand(PitCommand::RR(None)));
                 }
             }
             match self.calc.strat(this.fuel_level, &adj, this.ends()) {
