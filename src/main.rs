@@ -14,8 +14,10 @@ use druid::{
 };
 use druid::{LensExt, TimerToken};
 use druid_widget_nursery::DropdownSelect;
+use flexi_logger::{Duplicate, FileSpec, Logger};
 use history::RaceSession;
 use ircalc::{AmountLeft, Estimation, UserSettings};
+use log::info;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::mem;
@@ -31,6 +33,16 @@ mod strat;
 static TIMER_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() {
+    log_panics::init();
+    Logger::try_with_str("info")
+        .unwrap()
+        .log_to_file(FileSpec::default()) // write logs to file
+        .duplicate_to_stderr(Duplicate::Warn) // print warnings and errors also to the console
+        .format_for_files(flexi_logger::detailed_format)
+        .start()
+        .unwrap();
+    info!("naf_calc starting");
+
     let sessions = history::Db::new(&ircalc::default_laps_db().unwrap())
         .unwrap()
         .sessions()
