@@ -627,7 +627,7 @@ fn build_active_dash() -> impl Widget<UiState> {
             |f: &Estimation, _e: &Env| {
                 format!(
                     "{:0.1}  {:+0.1}",
-                    f.start_track_temp,
+                    f.track_temp,
                     f.track_temp - f.start_track_temp
                 )
             },

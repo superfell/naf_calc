@@ -905,6 +905,8 @@ dependencies = [
 [[package]]
 name = "iracing-telem"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbe4e1e15a3110f5f86a5a54f85e6ab0bbe09da321418ebd0d83b9923c0e7f3e"
 dependencies = [
  "bitflags",
  "bytes",

@@ -225,6 +225,7 @@ impl SessionProgress {
             self.calc.save_laps().unwrap(); // TODO
             self.last = this;
             self.lap_start = this;
+            self.first = this;
         }
         if (!self.lap_start.is_on_track) && this.is_on_track {
             // ensure lap_start is from when we're in the car.
