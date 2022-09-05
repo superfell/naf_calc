@@ -44,9 +44,10 @@ fn main() {
     // sapi_lite::initialize().unwrap();
     // let synth = sapi_lite::tts::EventfulSynthesizer::new(events).unwrap();
     // synth.speak("Pit in the next 5 laps").unwrap();
+    let loggerfs = FileSpec::default().suppress_timestamp().o_directory(dirs_next::document_dir().map(|dir| dir.join("naf_calc")));
     let logger = Logger::try_with_str("info")
         .unwrap()
-        .log_to_file(FileSpec::default()) // write logs to file
+        .log_to_file(loggerfs) // write logs to file
         .duplicate_to_stderr(Duplicate::Warn) // print warnings and errors also to the console
         .format_for_files(flexi_logger::detailed_format)
         .start()
